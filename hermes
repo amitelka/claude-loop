@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# hermes — install & maintain the self-improving loop from this repo.
+#
+#   ./hermes install [--link]    place machinery, merge hooks, create runtime dirs
+#                                  (default copies; --link symlinks for live dev)
+#   ./hermes update              git pull + re-apply (idempotent)
+#   ./hermes uninstall [--purge] remove machinery + hooks + schedule (keeps your data unless --purge)
+#   ./hermes status              show install state + loopctl doctor
+#
+# Honors CLAUDE_CONFIG_DIR (default ~/.claude). Never touches .zshrc, never copies .env,
+# never enables anything silently — it prints the next steps for you to run.
+set -uo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+LOOP="$CLAUDE_HOME/loop"
+SKILLS_DIR="$CLAUDE_HOME/skills"
+SETTINGS="$CLAUDE_HOME/settings.json"
+
+die(){ echo "error: $*" >&2; exit 1; }
+need(){ command -v "$1" >/dev/null 2>&1 || die "missing required tool: $1"; }
+
+# Idempotently (re)point the 3 loop hooks at $LOOP, preserving all other settings and foreign hooks.
+merge_hooks(){
+  need jq
+  [ -f "$SETTINGS" ] || { mkdir -p "$CLAUDE_HOME"; echo '{}' > "$SETTINGS"; }
+  local tmp; tmp="$(mktemp)"
+  jq --arg base "$LOOP" '
+    def put($ev; $f):
+      .hooks[$ev] = (((.hooks[$ev] // [])
+        | map(select(((.hooks // []) | map(.command) | join(" ")) | contains($f) | not)))
+        + [{"hooks":[{"type":"command","command":("bash " + $base + "/hooks/" + $f)}]}]);
+    .hooks = (.hooks // {})
+    | put("Stop"; "on-stop.sh")
+    | put("SessionStart"; "on-session-start.sh")
+    | put("SessionEnd"; "on-session-end.sh")
+  ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS" || die "settings.json hook-merge failed"
+}
+
+unmerge_hooks(){
+  need jq; [ -f "$SETTINGS" ] || return 0
+  local tmp; tmp="$(mktemp)"
+  jq '
+    def rm($ev; $f):
+      .hooks[$ev] = ((.hooks[$ev] // []) | map(select(((.hooks // []) | map(.command) | join(" ")) | contains($f) | not)))
+      | if (.hooks[$ev] // [] | length) == 0 then del(.hooks[$ev]) else . end;
+    if .hooks then rm("Stop";"on-stop.sh") | rm("SessionStart";"on-session-start.sh") | rm("SessionEnd";"on-session-end.sh") else . end
+  ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+}
+
+place(){   # $1 = copy|link
+  mkdir -p "$LOOP/state" "$LOOP/log" "$LOOP/proposals" "$LOOP/pending/skills" "$LOOP/pending/memories" "$LOOP/archive" "$SKILLS_DIR"
+  if [ "$1" = link ]; then
+    for p in bin hooks prompts lib.sh config.sh; do rm -rf "$LOOP/$p"; ln -s "$REPO/loop/$p" "$LOOP/$p"; done
+    for s in review-memories review-skills; do rm -rf "$SKILLS_DIR/$s"; ln -s "$REPO/skills/$s" "$SKILLS_DIR/$s"; done
+  else
+    mkdir -p "$LOOP/bin" "$LOOP/hooks" "$LOOP/prompts"
+    cp -R "$REPO/loop/bin/." "$LOOP/bin/"
+    cp -R "$REPO/loop/hooks/." "$LOOP/hooks/"
+    cp -R "$REPO/loop/prompts/." "$LOOP/prompts/"
+    cp "$REPO/loop/lib.sh" "$LOOP/lib.sh"
+    cp "$REPO/loop/config.sh" "$LOOP/config.sh"       # defaults; your config.local.sh is never touched
+    for s in review-memories review-skills; do rm -rf "$SKILLS_DIR/$s"; cp -R "$REPO/skills/$s" "$SKILLS_DIR/$s"; done
+  fi
+  chmod +x "$LOOP/bin/"* "$LOOP/hooks/"*.sh 2>/dev/null || true
+}
+
+cmd="${1:-status}"; shift 2>/dev/null || true
+case "$cmd" in
+  install)
+    mode=copy; [ "${1:-}" = "--link" ] && mode=link
+    place "$mode"; merge_hooks
+    echo "✓ installed ($mode) into $CLAUDE_HOME"
+    echo "next steps (nothing was enabled automatically):"
+    echo "  $LOOP/bin/loopctl token             # optional — unattended-cron auth"
+    echo "  $LOOP/bin/loopctl install-schedule  # daily harvest + gardener (launchd)"
+    echo "  $LOOP/bin/loopctl enable            # start the per-session reviewer (stays dry-run)"
+    echo "  $LOOP/bin/loopctl mode active       # when you trust it: memories auto-write"
+    echo "  $LOOP/bin/loopctl doctor            # health check anytime"
+    ;;
+  update)
+    need git
+    ( cd "$REPO" && git pull --ff-only ) || die "git pull failed (commit/stash local changes first?)"
+    if [ -L "$LOOP/bin" ]; then merge_hooks; echo "✓ updated (linked — pulled latest; symlinks are already live)"
+    else place copy; merge_hooks; echo "✓ updated (re-copied latest machinery)"; fi
+    echo "  your config.local.sh, token, and data were left untouched."
+    ;;
+  uninstall)
+    purge=0; [ "${1:-}" = "--purge" ] && purge=1
+    unmerge_hooks
+    # launchd lives in ~/Library/LaunchAgents (NOT isolated by CLAUDE_CONFIG_DIR) — only touch it for a real default install
+    if [ "$CLAUDE_HOME" = "$HOME/.claude" ] && [ -e "$LOOP/bin/loopctl" ]; then bash "$LOOP/bin/loopctl" uninstall-schedule 2>/dev/null
+    else echo "  (skipped launchd cleanup — non-default CLAUDE_CONFIG_DIR; remove ~/Library/LaunchAgents/io.claudeloop.* manually if you set up a schedule)"; fi
+    for p in bin hooks prompts lib.sh config.sh; do rm -rf "$LOOP/$p"; done
+    for s in review-memories review-skills; do rm -rf "$SKILLS_DIR/$s"; done
+    if [ "$purge" = 1 ]; then rm -rf "$LOOP"; echo "✓ uninstalled + PURGED ($LOOP removed)"
+    else echo "✓ uninstalled machinery + hooks + schedule. Kept your data in $LOOP/ (state, log, proposals, pending, archive, .env, config.local.sh)."; fi
+    echo "  Your memories in $CLAUDE_HOME/memory-global are untouched."
+    ;;
+  status)
+    echo "repo:    $REPO"
+    echo "target:  $CLAUDE_HOME"
+    if [ -L "$LOOP/bin" ]; then echo "install: linked (dev)"; elif [ -d "$LOOP/bin" ]; then echo "install: copied"; else echo "install: not installed"; fi
+    [ -d "$REPO/.git" ] && echo "version: $(cd "$REPO" && git rev-parse --short HEAD 2>/dev/null) ($(cd "$REPO" && git rev-list --count HEAD 2>/dev/null) commits)"
+    [ -e "$LOOP/bin/loopctl" ] && { echo "---"; bash "$LOOP/bin/loopctl" doctor 2>/dev/null; }
+    ;;
+  *) echo "usage: ./hermes {install [--link] | update | uninstall [--purge] | status}"; exit 1;;
+esac

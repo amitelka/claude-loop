@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# loopctl — control the self-improving loop. `loopctl` with no args shows status.
+set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || { echo "loop not installed"; exit 1; }
+local_cfg="$LOOP_DIR/config.local.sh"   # personal overrides (gitignored), sourced last by config.sh
+set_cfg() { touch "$local_cfg"; if grep -q "^$1=" "$local_cfg" 2>/dev/null; then sed -i '' "s|^$1=.*|$1=$2|" "$local_cfg"; else printf '%s=%s\n' "$1" "$2" >> "$local_cfg"; fi; }
+
+cmd="${1:-status}"; shift || true
+case "$cmd" in
+  status)
+    echo "enabled : $LOOP_ENABLED"
+    echo "mode    : $LOOP_MODE"
+    echo "reviewer: $REVIEWER_MODEL effort=$REVIEWER_EFFORT  (every ${REVIEW_EVERY_TURNS} turns / ${REVIEW_EVERY_TOOLCALLS} tools)"
+    echo "gardener: $GARDENER_MODEL effort=$GARDENER_EFFORT"
+    echo "pending skills  : $(pending_skill_count)  ($PENDING_SKILLS)"
+    echo "pending memories: $(find "$PENDING_MEM" -maxdepth 1 -name '*.md' ! -name '*.WHY.md' 2>/dev/null | wc -l | tr -d ' ')"
+    echo "schedule:"; ls "$HOME"/Library/LaunchAgents/io.claudeloop.*.plist 2>/dev/null | sed 's/^/  /' || echo "  (none installed)"
+    echo "recent log:"; tail -n 6 "$LOG" 2>/dev/null | sed 's/^/  /'
+    ;;
+  enable)  set_cfg LOOP_ENABLED 1; echo "loop enabled";;
+  disable) set_cfg LOOP_ENABLED 0; echo "loop disabled";;
+  mode)
+    case "${1:-}" in
+      dry-run|active) set_cfg LOOP_MODE "$1"; echo "mode -> $1";;
+      *) echo "usage: loopctl mode dry-run|active"; exit 1;;
+    esac;;
+  review-now)
+    proj="$CLAUDE_HOME/projects/$(printf '%s' "$PWD" | sed 's|/|-|g')"
+    t="$(ls -t "$proj"/*.jsonl 2>/dev/null | head -1)"
+    [ -f "$t" ] || { echo "no transcript for this project ($proj)"; exit 1; }
+    session="$(basename "$t" .jsonl)"
+    slice="$(mktemp -t loop-slice.XXXXXX)"; cp "$t" "$slice"
+    echo "reviewing session $session (mode=$LOOP_MODE) ..."
+    bash "$LOOP_DIR/bin/review.sh" "$slice" "$session" "$PWD"
+    echo "done. -> loopctl status   (proposals in $PENDING_SKILLS , $PENDING_MEM)"
+    ;;
+  install-schedule)
+    la="$HOME/Library/LaunchAgents"; mkdir -p "$la"
+    _agent() { # $1=label $2=hour $3=min $4=command
+      cat > "$la/$1.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$1</string>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>-lc</string><string>$4</string></array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>$2</integer><key>Minute</key><integer>$3</integer></dict>
+  <key>StandardOutPath</key><string>$LOG</string>
+  <key>StandardErrorPath</key><string>$LOG</string>
+</dict></plist>
+PLIST
+      launchctl unload "$la/$1.plist" 2>/dev/null
+      launchctl load -w "$la/$1.plist" && echo "  loaded $1 (daily $2:$(printf '%02d' "$3"))"
+    }
+    _agent io.claudeloop.harvest 2 30 "bash $LOOP_DIR/bin/harvest.sh"
+    _agent io.claudeloop.garden  3 0  "bash $LOOP_DIR/bin/garden.sh"
+    echo "scheduled via launchd (daily; a run missed while asleep/off fires on next wake/login)."
+    echo "NOTE: unattended runs need a subscription token — run: loopctl token"
+    ;;
+  uninstall-schedule)
+    la="$HOME/Library/LaunchAgents"
+    for l in io.claudeloop.harvest io.claudeloop.garden; do
+      launchctl unload "$la/$l.plist" 2>/dev/null
+      rm -f "$la/$l.plist" && echo "removed $l"
+    done;;
+  token)
+    echo "Generate a long-lived subscription token, then paste it here (stored chmod 600 in $ENV_FILE)."
+    echo "Run in a normal terminal:  claude setup-token"
+    printf "paste token> "; read -r tok
+    if [ -n "$tok" ]; then umask 077; printf 'export CLAUDE_CODE_OAUTH_TOKEN=%q\n' "$tok" > "$ENV_FILE"; echo "saved to $ENV_FILE"; else echo "skipped"; fi
+    ;;
+  stats)
+    l="$LOG"; g="$MEMORY_DIR"
+    echo "── loop stats ──"
+    echo "reviews : started=$(grep -c 'review: start' "$l" 2>/dev/null)  ok=$(grep -c 'valid proposal' "$l" 2>/dev/null)  invalid=$(grep -c 'INVALID JSON' "$l" 2>/dev/null)"
+    echo "triggers: stop=$(grep -c 'stop: trigger' "$l" 2>/dev/null)  session-end=$(grep -c 'session-end:' "$l" 2>/dev/null)  harvest=$(grep -c 'harvest: nightly' "$l" 2>/dev/null)  garden=$(grep -c 'garden: start' "$l" 2>/dev/null)"
+    echo "library : global=$(ls "$g"/*.md 2>/dev/null | grep -vc MEMORY.md)  held=$(find "$PENDING_MEM" -maxdepth 1 -name '*.md' ! -name '*.WHY.md' 2>/dev/null | wc -l | tr -d ' ')  pending-skills=$(pending_skill_count)  dropped=$(ls "$ARCHIVE_DIR/dropped"/*.md 2>/dev/null | grep -vc WHY)"
+    echo "MEMORY  : $(grep -cE '^- \[' "$g/MEMORY.md" 2>/dev/null) pointers, $(wc -l < "$g/MEMORY.md" 2>/dev/null | tr -d ' ')/$MEMORY_INDEX_MAX_LINES lines"
+    echo "snapshots: $(mem_git rev-list --count HEAD 2>/dev/null || echo 0)   last review: $(grep 'review: done' "$l" 2>/dev/null | tail -1 | cut -c1-19)"
+    ctot=$(grep -oE 'cost=[0-9.]+' "$l" 2>/dev/null | sed 's/cost=//' | awk '{s+=$1} END{printf "%.4f", s+0}')
+    cn=$(grep -cE 'cost=[0-9.]+' "$l" 2>/dev/null)
+    echo "cost    : \$$ctot across $cn reviews (API-equivalent; subscription not billed per-call)"
+    echo "mem git : $(mem_git status --porcelain 2>/dev/null | wc -l | tr -d ' ') uncommitted, $(mem_git rev-list --count HEAD 2>/dev/null || echo 0) snapshots"
+    echo "outcomes: +mem=$(grep -c '  +mem ' "$l" 2>/dev/null) +skill=$(grep -c '  +skill ' "$l" 2>/dev/null) dup-skip=$(grep -cE '  skip (mem|skill) .*dup' "$l" 2>/dev/null) rejected=$(grep -cE '  reject (mem|skill)' "$l" 2>/dev/null) anomalies=$(grep -c 'ANOMALY' "$l" 2>/dev/null)"
+    ;;
+  snapshot) mem_snapshot "manual"; echo "memory-global snapshot committed";;
+  mem-log)  mem_git log --oneline -20 2>/dev/null || echo "(no snapshots yet — run: loopctl snapshot)";;
+  mem-diff) mem_git diff "${1:-HEAD}" 2>/dev/null || echo "(no snapshots yet)";;
+  rollback)
+    ref="${1:-}"; [ -n "$ref" ] || { echo "usage: loopctl rollback <commit>   (see: loopctl mem-log)"; exit 1; }
+    mem_snapshot "pre-rollback"
+    mem_git checkout "$ref" -- . && echo "memory-global restored to $ref (prior state saved as a snapshot first)";;
+  doctor)
+    okx(){ echo "  ✓ $1"; }; wrn(){ echo "  ⚠ $1"; }
+    echo "── loop doctor ──"
+    for hk in Stop SessionStart SessionEnd; do jq -e ".hooks.$hk" "$CLAUDE_HOME/settings.json" >/dev/null 2>&1 && okx "hook $hk wired" || wrn "hook $hk MISSING"; done
+    la=$(launchctl list 2>/dev/null | grep -c claudeloop); [ "${la:-0}" -ge 2 ] && okx "launchd: $la agents loaded" || wrn "launchd: ${la:-0}/2 (run: loopctl install-schedule)"
+    dd=$(mem_git status --porcelain 2>/dev/null | wc -l | tr -d ' '); [ "${dd:-0}" = 0 ] && okx "memory-global clean" || wrn "memory-global: $dd uncommitted (loopctl snapshot)"
+    sl=$(find "$STATE_DIR" -name '*.lock' -type d -mmin +30 2>/dev/null)
+    if [ -n "$sl" ]; then printf '%s\n' "$sl" | xargs rm -rf 2>/dev/null; wrn "cleared $(printf '%s\n' "$sl" | wc -l | tr -d ' ') stale lock(s)"; else okx "no stale locks"; fi
+    if [ -f "$ENV_FILE" ]; then case "$(stat -f '%Sp' "$ENV_FILE" 2>/dev/null)" in -rw-------) okx "token present (perms 600)";; *) wrn "token perms not 600";; esac; else wrn "token missing (loopctl token — needed for cron)"; fi
+    for t in claude jq perl; do command -v "$t" >/dev/null 2>&1 && okx "tool $t" || wrn "tool $t MISSING"; done
+    lh=$(grep 'harvest: nightly pass complete' "$LOG" 2>/dev/null | tail -1 | cut -c1-19); [ -n "$lh" ] && okx "last harvest complete: $lh" || wrn "no completed harvest yet"
+    lg=$(grep 'garden: done' "$LOG" 2>/dev/null | tail -1 | cut -c1-19); [ -n "$lg" ] && okx "last garden done: $lg" || wrn "no completed garden yet"
+    ;;
+  *) echo "usage: loopctl {status|stats|doctor|enable|disable|mode dry-run|active|review-now|snapshot|rollback <ref>|mem-log|mem-diff|install-schedule|uninstall-schedule|token}";;
+esac

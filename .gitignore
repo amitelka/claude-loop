@@ -1,0 +1,14 @@
+# Personal / machine-specific — never commit
+loop/config.local.sh
+loop/.env
+
+# Runtime state & data (created at install; never belongs in the repo)
+loop/state/
+loop/log/
+loop/proposals/
+loop/pending/
+loop/archive/
+
+# Your actual memories live in ~/.claude/memory-global (a separate git repo), never here.
+
+.DS_Store

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# ~/.claude/loop/lib.sh — shared helpers. Source this; it pulls in config.sh.
+
+_LOOP_SELF="${BASH_SOURCE[0]:-$HOME/.claude/loop/lib.sh}"
+LOOP_LIB_DIR="$(cd "$(dirname "$_LOOP_SELF")" 2>/dev/null && pwd)"
+[ -f "$LOOP_LIB_DIR/config.sh" ] || LOOP_LIB_DIR="$HOME/.claude/loop"
+# shellcheck disable=SC1091
+. "$LOOP_LIB_DIR/config.sh"
+[ -f "$ENV_FILE" ] && . "$ENV_FILE"   # optional OAuth token for unattended cron
+
+ts()  { date '+%Y-%m-%dT%H:%M:%S%z'; }
+log() { printf '%s %s\n' "$(ts)" "$*" >> "$LOG" 2>/dev/null; }
+
+# Counts over a RAW JSONL slice on stdin.
+count_tools() { jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use") | .id' 2>/dev/null | wc -l | tr -d ' '; }
+count_turns() { jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="text")    | "x"' 2>/dev/null | wc -l | tr -d ' '; }
+
+# Render a RAW JSONL slice (stdin) → compact reviewer transcript (stdout). Active branch only
+# (drops Esc-Esc rewind forks), drops isMeta noise, keeps Task/Agent subagent returns in full.
+render_slice() { /usr/bin/python3 "$LOOP_DIR/bin/render_slice.py" 2>/dev/null; }
+
+pending_skill_count() { find "$PENDING_SKILLS" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' '; }
+
+# memory-global git snapshots (rollback safety, esp. before the gardener mutates it).
+mem_git()      { git -C "$MEMORY_DIR" "$@"; }
+mem_snapshot() {  # $1 = label
+  mem_git rev-parse --git-dir >/dev/null 2>&1 || { mem_git init -q && mem_git config user.email loop@local && mem_git config user.name claude-loop; }
+  mem_git add -A 2>/dev/null
+  mem_git commit -q -m "${1:-snapshot} $(date '+%Y-%m-%dT%H:%M:%S')" 2>/dev/null || true
+}
+
+# Fingerprint of the dirs the reviewer must NOT touch (memory-global + pending + installed skills).
+# review.sh asserts this is unchanged across the reviewer run — it may write only its proposal artifact.
+loop_manifest() {
+  find "$MEMORY_DIR" "$PENDING_MEM" "$PENDING_SKILLS" "$SKILLS_DIR" -type f -exec stat -f '%N|%m|%z' {} + 2>/dev/null | LC_ALL=C sort | shasum | awk '{print $1}'
+}
