@@ -34,21 +34,31 @@ raw="$(printf '%s' "$prompt" | claude -p \
   --no-session-persistence \
   --output-format json \
   --allowedTools Read Write Edit Grep Glob 2>/dev/null)"
-is_err="$(printf '%s' "$raw" | jq -r 'if type=="array" then (map(select(.type=="result"))|last|.is_error) else (.is_error // false) end' 2>/dev/null)"
-cost="$(printf '%s' "$raw" | jq -r 'if type=="array" then (map(select(.type=="result"))|last|.total_cost_usd) else (.total_cost_usd // empty) end' 2>/dev/null)"
-mem_snapshot "post-garden"
+rc=$?   # pipefail is set, so this is claude's exit status
 
-# Confirmed success = no API error AND a fresh, non-empty digest written this run.
+# Confirmed success requires ALL of: clean exit, parseable JSON, no API error reported, and a
+# fresh non-empty digest written THIS run. A timeout / dropped connection (the observed failure)
+# yields a non-zero rc and/or non-JSON output — both now fail the run instead of slipping through
+# on a stale digest.
 dmtime="$(stat -f %m "$digest" 2>/dev/null || echo 0)"
-ok=1; reason=""
-[ "$is_err" = "true" ] && { ok=0; reason="api-error"; }
-[ -s "$digest" ]       || { ok=0; reason="${reason:+$reason,}no-digest"; }
+ok=1; reason=""; cost="?"
+[ "$rc" -eq 0 ] || { ok=0; reason="claude-rc-$rc"; }
+if printf '%s' "$raw" | jq -e . >/dev/null 2>&1; then
+  is_err="$(printf '%s' "$raw" | jq -r 'if type=="array" then (map(select(.type=="result"))|last|.is_error) else (.is_error // false) end' 2>/dev/null)"
+  cost="$(printf '%s' "$raw" | jq -r 'if type=="array" then (map(select(.type=="result"))|last|.total_cost_usd) else (.total_cost_usd // empty) end' 2>/dev/null)"
+  [ "$is_err" = "true" ] && { ok=0; reason="${reason:+$reason,}api-error"; }
+else
+  ok=0; reason="${reason:+$reason,}invalid-json"
+fi
+[ -s "$digest" ]                || { ok=0; reason="${reason:+$reason,}no-digest"; }
 [ "${dmtime:-0}" -ge "$start" ] || { ok=0; reason="${reason:+$reason,}stale-digest"; }
 
 if [ "$ok" = 1 ]; then
+  mem_snapshot "post-garden"
   date +%s > "$STATE_DIR/garden.success"; rm -f "$STATE_DIR/garden.fail"
   log "garden: done (ok) cost=${cost:-?} -> $digest"
 else
+  mem_snapshot "post-garden-FAILED"   # truthful label; pre-garden snapshot remains the rollback point
   printf '%s|%s' "$(date +%s)" "$reason" > "$STATE_DIR/garden.fail"
   log "garden: FAILED ($reason) cost=${cost:-?} — not marking success; harvest will retry when awake"
 fi
