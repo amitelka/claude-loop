@@ -15,7 +15,7 @@ case "$cmd" in
     echo "pending skills  : $(pending_skill_count)  ($PENDING_SKILLS)"
     echo "pending memories: $(find "$PENDING_MEM" -maxdepth 1 -name '*.md' ! -name '*.WHY.md' 2>/dev/null | wc -l | tr -d ' ')  ($PENDING_MEM)"
     echo "schedule:"; ls "$HOME"/Library/LaunchAgents/io.claudeloop.*.plist 2>/dev/null | sed 's/^/  /' || echo "  (none installed)"
-    echo "recent log:"; tail -n 6 "$LOG" 2>/dev/null | sed 's/^/  /'
+    echo "recent log: ($LOG)"; tail -n 6 "$LOG" 2>/dev/null | sed 's/^/  /'
     ;;
   enable)  set_cfg LOOP_ENABLED 1; echo "loop enabled";;
   disable) set_cfg LOOP_ENABLED 0; echo "loop disabled";;
