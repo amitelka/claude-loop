@@ -100,7 +100,11 @@ PLIST
     if [ -f "$ENV_FILE" ]; then case "$(stat -f '%Sp' "$ENV_FILE" 2>/dev/null)" in -rw-------) okx "token present (perms 600)";; *) wrn "token perms not 600";; esac; else wrn "token missing (loopctl token — needed for cron)"; fi
     for t in claude jq perl; do command -v "$t" >/dev/null 2>&1 && okx "tool $t" || wrn "tool $t MISSING"; done
     lh=$(grep 'harvest: nightly pass complete' "$LOG" 2>/dev/null | tail -1 | cut -c1-19); [ -n "$lh" ] && okx "last harvest complete: $lh" || wrn "no completed harvest yet"
-    lg=$(grep 'garden: done' "$LOG" 2>/dev/null | tail -1 | cut -c1-19); [ -n "$lg" ] && okx "last garden done: $lg" || wrn "no completed garden yet"
+    gok="$(cat "$STATE_DIR/garden.success" 2>/dev/null || echo 0)"; now="$(date +%s)"
+    gfr=""; [ -f "$STATE_DIR/garden.fail" ] && gfr="; last fail: $(cut -d'|' -f2 "$STATE_DIR/garden.fail")"
+    if [ "${gok:-0}" = 0 ]; then wrn "no successful garden recorded yet$gfr"
+    elif [ "$((now - gok))" -gt 172800 ]; then wrn "last successful garden >48h ago ($(date -r "$gok" '+%F %H:%M')$gfr)"
+    else okx "last garden ok: $(date -r "$gok" '+%F %H:%M')"; fi
     ;;
   *) echo "usage: loopctl {status|stats|doctor|enable|disable|mode dry-run|active|review-now|snapshot|rollback <ref>|mem-log|mem-diff|install-schedule|uninstall-schedule|token}";;
 esac
