@@ -91,6 +91,12 @@ PLIST
     echo "cost    : \$$ctot across $cn reviews (API-equivalent; subscription not billed per-call)"
     echo "mem git : $(mem_git status --porcelain 2>/dev/null | wc -l | tr -d ' ') uncommitted, $(mem_git rev-list --count HEAD 2>/dev/null || echo 0) snapshots"
     echo "outcomes: +mem=$(grep -c '  +mem ' "$l" 2>/dev/null) +skill=$(grep -c '  +skill ' "$l" 2>/dev/null) dup-skip=$(grep -cE '  skip (mem|skill) .*dup' "$l" 2>/dev/null) rejected=$(grep -cE '  reject (mem|skill)' "$l" 2>/dev/null) anomalies=$(grep -c 'ANOMALY' "$l" 2>/dev/null)"
+    sf="$STATE_DIR/skill-miner.state.json"; rj="$STATE_DIR/$REJECT_FILE_NAME"
+    ml="$(grep 'mine-skills:' "$l" 2>/dev/null | tail -1)"
+    mok="$(jq -r '.last_success_at // empty' "$sf" 2>/dev/null)"; [ -n "$mok" ] && mok="$(date -r "$mok" '+%F %H:%M' 2>/dev/null)"
+    msup=0; [ -f "$rj" ] && msup="$(wc -l < "$rj" | tr -d ' ')"
+    echo "miner   : last=$(printf '%s' "$ml" | cut -c1-19 | sed 's/^$/never/') \"$(printf '%s' "$ml" | sed -E 's/^[^ ]+ mine-skills: //' | cut -c1-44)\""
+    echo "          mines=$(grep -c 'mine-skills: done' "$l" 2>/dev/null) fails=$(grep -c 'mine-skills: FAILED' "$l" 2>/dev/null) rejected-suppressed=$msup  last-success=${mok:-never}"
     ;;
   skill-stats)
     f="$STATE_DIR/skill-uses.jsonl"; [ -s "$f" ] || { echo "no skill usage logged yet ($f)"; exit 0; }
