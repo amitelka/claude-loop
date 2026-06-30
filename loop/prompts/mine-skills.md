@@ -11,10 +11,14 @@ Candidate signals:
 - 2+ memories sharing a concrete procedure / toolchain / workflow.
 - A single memory that is mostly steps, commands, or a review checklist (procedural, not a one-off fact).
 - Repeated "How to apply" sequences across memories.
-Reject (do NOT propose): one-off project facts; pure preferences/feedback; facts with no repeatable procedure; anything already covered by an existing skill.
+Reject (do NOT propose): one-off project facts; pure preferences/feedback; facts with no repeatable procedure; anything already covered by an existing skill; **anything a memory already captures adequately** — a skill merely restating a memory is redundant permanent-context cost, so leave it as a memory unless it's a genuinely reusable *procedure* beyond the bare fact.
 
 ## Patch vs new — IMPORTANT
 If a candidate OVERLAPS an existing skill (installed or pending), set `"action":"patch"` targeting that skill and describe the change — do NOT create a near-duplicate. Use `"action":"new"` only when nothing existing covers it.
+
+## Trigger & correctness rules
+- **Symptom-phrased triggers.** Write `trigger_examples` as the SITUATION/symptom a user would actually say when they hit this — e.g. "unmount became a no-op", "rc=5 / EBUSY after a crash", "why did the gardener mark a failed run as success?" — NOT the topic name. Symptom-first phrasing is what makes a skill fire at the right moment; err slightly pushy (under-triggering is the common failure).
+- **Hedge UNVERIFIED claims.** If a source memory marks a mechanism/claim as unverified (or you can't confirm it from the memories), the skill body must say so and add a verification step — never assert an unverified mechanism as fact.
 
 ## OUTPUT — write your proposal to `{{PROPOSAL_FILE}}` with the Write tool
 Its entire content must be ONE valid JSON object (no prose, no markdown, no code fences):
