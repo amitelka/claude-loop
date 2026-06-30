@@ -38,6 +38,23 @@ skill_snapshot() {  # $1 = label
   skill_git commit -q -m "${1:-snapshot} $(date '+%Y-%m-%dT%H:%M:%S')" 2>/dev/null || true
 }
 
+# Shared mutex over the memory store: the gardener (rewrites memory-global) and the skill miner
+# (reads it) must never run concurrently, in either order. Atomic mkdir; a lock leaked by a crash /
+# power-loss is stolen after STALE_LOCK_SECS. acquire returns 0 if acquired, 1 if busy.
+STALE_LOCK_SECS="${STALE_LOCK_SECS:-7200}"
+acquire_store_lock() {  # $1 = holder label
+  local holder="${1:-?}" lock="$STATE_DIR/store.lock" epoch old age now
+  mkdir -p "$STATE_DIR" 2>/dev/null; now="$(date +%s)"
+  if mkdir "$lock" 2>/dev/null; then printf '%s %s %s\n' "$holder" "$$" "$now" > "$lock/owner" 2>/dev/null; return 0; fi
+  epoch="$(awk '{print $3}' "$lock/owner" 2>/dev/null)"; old="$(awk '{print $1}' "$lock/owner" 2>/dev/null)"
+  case "$epoch" in ''|*[!0-9]*) return 1;; esac          # no/garbled owner → assume fresh, don't steal
+  age=$(( now - epoch )); [ "$age" -gt "$STALE_LOCK_SECS" ] || return 1
+  rm -rf "$lock" 2>/dev/null; mkdir "$lock" 2>/dev/null || return 1
+  printf '%s %s %s\n' "$holder" "$$" "$now" > "$lock/owner" 2>/dev/null
+  log "store-lock: $holder stole stale lock (age ${age}s, was '${old:-?}')"; return 0
+}
+release_store_lock() { rm -rf "$STATE_DIR/store.lock" 2>/dev/null; }
+
 # Fingerprint of the dirs the reviewer must NOT touch (memory-global + pending + installed skills).
 # review.sh asserts this is unchanged across the reviewer run — it may write only its proposal artifact.
 loop_manifest() {

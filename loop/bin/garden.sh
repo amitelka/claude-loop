@@ -4,13 +4,12 @@
 # THIS run. Only then is state/garden.success updated. Failures log "garden: FAILED ..." and are
 # visible in `loopctl doctor`. A lock prevents the 03:00 run and a harvest catch-up from overlapping.
 set -uo pipefail
-. "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || exit 1
+. "$HOME/.claude/loop/lib.sh" 2>/dev/null || exit 1
 export LOOP_REVIEWER=1
 
 tag="${1:-scheduled}"   # "--catch-up" when invoked by harvest
-lock="$STATE_DIR/garden.lock"
-mkdir "$lock" 2>/dev/null || { log "garden: already running ($tag) — skip"; exit 0; }
-trap 'rmdir "$lock" 2>/dev/null' EXIT
+acquire_store_lock "garden-$tag" || { log "garden: memory store busy (garden/miner running) — skip ($tag)"; exit 0; }
+trap 'release_store_lock' EXIT
 
 stamp="$(date '+%Y-%m-%d')"
 digest="$LOOP_DIR/log/garden-$stamp.md"
