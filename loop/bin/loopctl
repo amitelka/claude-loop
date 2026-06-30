@@ -93,9 +93,11 @@ PLIST
     sf="$STATE_DIR/skill-miner.state.json"; rj="$STATE_DIR/$REJECT_FILE_NAME"
     ml="$(grep 'mine-skills:' "$l" 2>/dev/null | tail -1)"
     mok="$(jq -r '.last_success_at // empty' "$sf" 2>/dev/null)"; [ -n "$mok" ] && mok="$(date -r "$mok" '+%F %H:%M' 2>/dev/null)"
-    msup=0; [ -f "$rj" ] && msup="$(wc -l < "$rj" | tr -d ' ')"
+    rdl=0; [ -f "$rj" ] && rdl="$(wc -l < "$rj" | tr -d ' ')"
+    mreal=$(grep 'mine-skills: done' "$l" 2>/dev/null | grep -c 'dry=0'); mdry=$(grep 'mine-skills: done' "$l" 2>/dev/null | grep -c 'dry=1')
+    msupe=$(grep -oE 'suppressed=\[[^]]*\]' "$l" 2>/dev/null | sed -E 's/suppressed=\[//; s/\]//' | tr ',' '\n' | grep -c '[^[:space:]]')
     echo "miner   : last=$(printf '%s' "$ml" | cut -c1-19 | sed 's/^$/never/') \"$(printf '%s' "$ml" | sed -E 's/^[^ ]+ mine-skills: //' | cut -c1-44)\""
-    echo "          mines=$(grep -c 'mine-skills: done' "$l" 2>/dev/null) fails=$(grep -c 'mine-skills: FAILED' "$l" 2>/dev/null) rejected-suppressed=$msup  last-success=${mok:-never}"
+    echo "          runs=$((mreal+mdry)) real=$mreal dry=$mdry fails=$(grep -c 'mine-skills: FAILED' "$l" 2>/dev/null)  rejection-denylist=$rdl suppressed-events=$msupe  last-success=${mok:-never}"
     ;;
   skill-stats)
     f="$STATE_DIR/skill-uses.jsonl"; [ -s "$f" ] || { echo "no skill usage logged yet ($f)"; exit 0; }
