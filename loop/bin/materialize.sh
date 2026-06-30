@@ -66,12 +66,15 @@ for ((i=0; i<slen && i<2; i++)); do
 
   [[ "$name" =~ $kebab ]] || { log "  reject skill (name '$name')"; rej_s=$((rej_s+1)); continue; }
   { [ -n "$desc" ] && [ -n "$when" ] && [ -n "$body" ]; } || { log "  reject skill $name (missing fields)"; rej_s=$((rej_s+1)); continue; }
+  evalok=$(printf '%s' "$s" | jq -r '(((.trigger_examples//[])|length)>0) and (((.expected_tools//[])|length)>0) and (((.replay_scenario//"")|length)>0)' 2>/dev/null)
+  [ "$evalok" = true ] || { log "  reject skill $name (1e eval-gate: missing trigger_examples/expected_tools/replay_scenario)"; rej_s=$((rej_s+1)); continue; }
   if printf '%s' "$body $desc" | grep -qiE "$SECRET"; then log "  reject skill $name (secret-like)"; rej_s=$((rej_s+1)); continue; fi
   if [ -d "$SKILLS_DIR/$name" ] || [ -d "$PENDING_SKILLS/$name" ]; then log "  skip skill $name (dup)"; rej_s=$((rej_s+1)); continue; fi
 
+  smeta=$(printf '%s' "$s" | jq -r '"## Triggers\n"+(((.trigger_examples//[])|map("- "+.))|join("\n"))+"\n\n## Negative triggers\n"+(((.negative_triggers//[])|map("- "+.))|join("\n"))+"\n\n## Expected tools\n"+((.expected_tools//[])|join(", "))+"\n\n## Expected output\n"+(.expected_output//"")+"\n\n## Replay scenario\n"+(.replay_scenario//"")')
   mkdir -p "$PENDING_SKILLS/$name"
   { printf -- '---\n'; printf 'name: %s\ndescription: %s\nwhen_to_use: %s\nuser-invocable: true\n' "$name" "$(yqs "$desc")" "$(yqs "$when")";
-    printf -- '---\n\n'; printf '%s\n' "$body"; } > "$PENDING_SKILLS/$name/SKILL.md"
+    printf -- '---\n\n'; printf '%s\n\n%s\n' "$body" "$smeta"; } > "$PENDING_SKILLS/$name/SKILL.md"
   printf 'source_session: %s\nrepo: %s\nwhy: %s\n' "$session" "$repo" "$why" > "$PENDING_SKILLS/$name/WHY.md"
   log "  +skill $name -> pending"; acc_s=$((acc_s+1))
 done

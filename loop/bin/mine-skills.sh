@@ -49,6 +49,8 @@ for ((i=0; i<n && i<3; i++)); do
   [[ "$name" =~ $kebab ]] || { echo "  reject (bad name '$name')"; rej=$((rej+1)); continue; }
   [ -n "$desc" ] || { echo "  reject $name (no description)"; rej=$((rej+1)); continue; }
   if printf '%s' "$c" | grep -qiE "$SECRET"; then echo "  reject $name (secret-like)"; rej=$((rej+1)); continue; fi
+  evalok=$(printf '%s' "$c" | jq -r '(((.trigger_examples//[])|length)>0) and (((.expected_tools//[])|length)>0) and (((.replay_scenario//"")|length)>0)' 2>/dev/null)
+  [ "$evalok" = true ] || { echo "  reject $name (1e eval-gate: needs trigger_examples + expected_tools + replay_scenario)"; rej=$((rej+1)); continue; }
 
   if [ "$dry" = 1 ]; then
     echo "  [$action] $name — $desc"
