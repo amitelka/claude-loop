@@ -29,6 +29,15 @@ mem_snapshot() {  # $1 = label
   mem_git commit -q -m "${1:-snapshot} $(date '+%Y-%m-%dT%H:%M:%S')" 2>/dev/null || true
 }
 
+# ~/.claude/skills git snapshots — same idea as mem_snapshot, so skill patches (yours or loop-proposed)
+# and the eventual curator's edits are revertable. The skills dir becomes its own local git repo.
+skill_git()      { git -C "$SKILLS_DIR" "$@"; }
+skill_snapshot() {  # $1 = label
+  skill_git rev-parse --git-dir >/dev/null 2>&1 || { skill_git init -q && skill_git config user.email loop@local && skill_git config user.name claude-loop; }
+  skill_git add -A 2>/dev/null
+  skill_git commit -q -m "${1:-snapshot} $(date '+%Y-%m-%dT%H:%M:%S')" 2>/dev/null || true
+}
+
 # Fingerprint of the dirs the reviewer must NOT touch (memory-global + pending + installed skills).
 # review.sh asserts this is unchanged across the reviewer run — it may write only its proposal artifact.
 loop_manifest() {
