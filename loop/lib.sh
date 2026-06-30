@@ -60,3 +60,15 @@ release_store_lock() { rm -rf "$STATE_DIR/store.lock" 2>/dev/null; }
 loop_manifest() {
   find "$MEMORY_DIR" "$PENDING_MEM" "$PENDING_SKILLS" "$SKILLS_DIR" -type f -exec stat -f '%N|%m|%z' {} + 2>/dev/null | LC_ALL=C sort | shasum | awk '{print $1}'
 }
+
+# Skip-if-unchanged fingerprint for the skill miner — the meaningful INPUTS only. Deliberately NOT
+# pending/skills: staging proposals is an OUTPUT of mining, so including it would self-invalidate the
+# skip (mine → stage → fingerprint moves → mine again). Content-derived, order-stable.
+miner_fingerprint() {
+  local mh sh uh ph
+  mh="$(mem_git rev-parse HEAD 2>/dev/null || echo none)"
+  sh="$(skill_git rev-parse HEAD 2>/dev/null || echo none)"
+  uh="$(shasum "$STATE_DIR/skill-uses.jsonl" 2>/dev/null | awk '{print $1}')"
+  ph="$(shasum "$LOOP_DIR/prompts/mine-skills.md" 2>/dev/null | awk '{print $1}')"
+  printf '%s|%s|%s|%s' "$mh" "$sh" "${uh:-none}" "${ph:-none}" | shasum | awk '{print $1}'
+}

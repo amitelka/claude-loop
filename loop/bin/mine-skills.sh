@@ -5,10 +5,22 @@
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || exit 1
 export LOOP_REVIEWER=1
-dry=0; [ "${1:-}" = "--dry-run" ] && dry=1
+dry=0; force=0; for a in "$@"; do case "$a" in --dry-run) dry=1;; --force) force=1;; esac; done
 
 acquire_store_lock "mine-skills" || { log "mine-skills: memory store busy (garden or miner running) — skip"; echo "mine-skills: store busy — skip (retry later / after garden finishes)"; exit 0; }
 trap 'release_store_lock' EXIT
+
+STATE_FILE="$STATE_DIR/skill-miner.state.json"
+fp="$(miner_fingerprint)"
+if [ "$force" != 1 ] && [ "${SKILL_MINER_ONLY_IF_CHANGED:-1}" = 1 ]; then
+  last="$(jq -r '.last_fingerprint // ""' "$STATE_FILE" 2>/dev/null)"
+  if [ -n "$last" ] && [ "$fp" = "$last" ]; then
+    lat="$(jq -r '.last_success_at // 0' "$STATE_FILE" 2>/dev/null)"
+    log "mine-skills: inputs unchanged since last successful mine — skip"
+    echo "mine-skills: unchanged since last successful run ($(date -r "${lat:-0}" '+%F %H:%M' 2>/dev/null || echo '?')); use --force to mine anyway"
+    exit 0
+  fi
+fi
 
 SECRET='sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]+|-----BEGIN [A-Z ]*PRIVATE KEY|[Bb]earer [A-Za-z0-9._-]{24,}|password[[:space:]]*[:=][[:space:]]*[^[:space:]]'
 kebab='^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
@@ -91,5 +103,7 @@ for ((i=0; i<n && i<3; i++)); do
   staged=$((staged+1))
 done
 log "mine-skills: done candidates=$n staged=$staged rejected=$rej dry=$dry cost=${cost:-?}"
+[ "$dry" = 0 ] && jq -n --arg fp "$fp" --argjson at "$(date +%s)" --arg p "$proposal" \
+  '{last_fingerprint:$fp, last_success_at:$at, last_proposal_path:$p}' > "$STATE_FILE"
 [ "$dry" = 1 ] && echo "(dry-run — re-run without --dry-run to stage, then triage with /review-skills)"
 exit 0
