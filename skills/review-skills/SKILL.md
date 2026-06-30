@@ -11,10 +11,10 @@ The self-improving loop stages candidate skills in `~/.claude/loop/pending/skill
 
 ## Steps
 1. List proposals: `ls -d ~/.claude/loop/pending/skills/*/ 2>/dev/null`. If none, say so and stop.
-2. For each, Read both `SKILL.md` and `WHY.md`. Present concisely: the skill name, what it does (description + the key steps), where `WHY.md` says it should install (global `~/.claude/skills` vs a specific repo's `.claude/skills`), and the source session + rationale.
-3. Give your own quick read: is it genuinely reusable and correct, or thin/duplicative? Check it doesn't duplicate an existing skill (`ls ~/.claude/skills` and, for a repo-scoped one, that repo's `.claude/skills`).
+2. For each, Read both `SKILL.md` and `WHY.md`. Present concisely: the skill name, what it does (description + the key steps), the `repo` tag (if any) from `WHY.md`, and the source session + rationale.
+3. Give your own quick read: is it genuinely reusable and correct, or thin/duplicative? Check it doesn't duplicate an existing skill (`ls ~/.claude/skills`).
 4. Ask the user to approve or reject each (offer to batch).
-5. On **approve**: move the proposal dir to the install location from `WHY.md` — `~/.claude/skills/<name>/` for cross-cutting, or `<repo>/.claude/skills/<name>/` for repo-specific (create the parent dir, then `mv`). Drop the now-redundant `WHY.md` (or keep it inside — your call, but it isn't needed at runtime).
+5. On **approve**: install to `~/.claude/skills/<name>/` (always global — any `repo` tag in `WHY.md` is advisory only, never a separate location); `mv` the proposal dir there. Drop the now-redundant `WHY.md` (or keep it inside — your call, but it isn't needed at runtime).
 6. On **reject**: move the proposal dir to `~/.claude/loop/archive/rejected/<name>-<date>/` so it isn't re-proposed.
 7. Summarize what was installed and what was archived.
 

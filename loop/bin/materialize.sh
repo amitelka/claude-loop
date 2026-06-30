@@ -25,7 +25,8 @@ for ((i=0; i<mlen && i<3; i++)); do
   body=$(printf '%s' "$m" | jq -r '.body // empty')
   why=$(printf '%s'  "$m" | jq -r '.why // empty')
   how=$(printf '%s'  "$m" | jq -r '.how_to_apply // empty')
-  repo=$(printf '%s' "$m" | jq -r '.repo // ""')
+  # repo is model-controlled → normalize to one safe token (basename, kebab-safe) so it can't leak a path or break YAML
+  repo=$(printf '%s' "$m" | jq -r '.repo // ""' | tr -d '\n' | sed 's#.*/##' | tr -cd 'a-zA-Z0-9._-' | cut -c1-48)
 
   [[ "$slug" =~ $kebab ]] || { log "  reject mem (slug '$slug')"; rej_m=$((rej_m+1)); continue; }
   case "$type" in user|feedback|project|reference) ;; *) log "  reject mem $slug (type '$type')"; rej_m=$((rej_m+1)); continue;; esac
@@ -61,7 +62,7 @@ for ((i=0; i<slen && i<2; i++)); do
   when=$(printf '%s' "$s" | jq -r '.when_to_use // empty')
   body=$(printf '%s' "$s" | jq -r '.body // empty')
   why=$(printf '%s'  "$s" | jq -r '.why // empty')
-  repo=$(printf '%s' "$s" | jq -r '.repo // ""')
+  repo=$(printf '%s' "$s" | jq -r '.repo // ""' | tr -d '\n' | sed 's#.*/##' | tr -cd 'a-zA-Z0-9._-' | cut -c1-48)
 
   [[ "$name" =~ $kebab ]] || { log "  reject skill (name '$name')"; rej_s=$((rej_s+1)); continue; }
   { [ -n "$desc" ] && [ -n "$when" ] && [ -n "$body" ]; } || { log "  reject skill $name (missing fields)"; rej_s=$((rej_s+1)); continue; }
