@@ -66,8 +66,7 @@ PLIST
     ;;
   uninstall-schedule)
     la="$HOME/Library/LaunchAgents"
-    for l in io.claudeloop.harvest io.claudeloop.garden io.claudeloop.mine-skills \
-             io.legacy.claudeloop.harvest io.legacy.claudeloop.garden io.legacy.claudeloop.mine-skills; do
+    for l in io.claudeloop.harvest io.claudeloop.garden io.claudeloop.mine-skills; do
       [ -f "$la/$l.plist" ] || continue
       launchctl unload "$la/$l.plist" 2>/dev/null
       rm -f "$la/$l.plist" && echo "removed $l"

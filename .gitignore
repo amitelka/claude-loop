@@ -2,6 +2,10 @@
 loop/config.local.sh
 loop/.env
 
+# Working/planning notes — personal + project context, not part of the distributed loop
+backlog.md
+hermes-comparison.md
+
 # Runtime state & data (created at install; never belongs in the repo)
 loop/state/
 loop/log/
