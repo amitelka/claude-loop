@@ -12,8 +12,8 @@ Propose only learnings that are durable (true beyond this session) AND non-obvio
 - memory.type: `user` (who they are / prefs) | `feedback` (a correction or working-style rule) | `project` (ongoing work / constraints not in the code) | `reference` (a URL / dashboard / API quirk / durable fact).
 - skill: a reusable multi-step procedure that worked.
 
-## Routing
-Set `install_location`: `"global"` if it applies across repos / is about the user / is cross-cutting infra-ops; otherwise the repo path it belongs to (use `{{CWD}}` or the relevant repo).
+## Repo tag (optional)
+Memories are always stored globally. Optionally set `repo` to the repo name a memory is *about* (derive from `{{CWD}}`), or leave it `""` if it's cross-cutting / about the user. It's only a tag for later filtering — it does NOT change where the memory is stored.
 
 ## OUTPUT — write your proposal to a file using the Write tool
 Use the **Write** tool to create the file `{{PROPOSAL_FILE}}`. Its entire content must be ONE valid JSON object (no prose, no markdown, no code fences) of exactly this shape:
@@ -21,10 +21,10 @@ Use the **Write** tool to create the file `{{PROPOSAL_FILE}}`. Its entire conten
   "session": "{{SESSION}}",
   "cwd": "{{CWD}}",
   "memories": [
-    {"slug": "kebab-case-slug", "type": "user|feedback|project|reference", "description": "one-line recall hook", "body": "the markdown fact", "why": "why it is durable/reusable", "how_to_apply": "how future sessions should use it (may be empty)", "install_location": "global"}
+    {"slug": "kebab-case-slug", "type": "user|feedback|project|reference", "description": "one-line recall hook", "body": "the markdown fact", "why": "why it is durable/reusable", "how_to_apply": "how future sessions should use it (may be empty)", "repo": ""}
   ],
   "skills": [
-    {"name": "kebab-case-name", "description": "trigger-friendly one-liner", "when_to_use": "when this should fire", "body": "numbered steps", "why": "evidence from the session", "install_location": "global"}
+    {"name": "kebab-case-name", "description": "trigger-friendly one-liner", "when_to_use": "when this should fire", "body": "numbered steps", "why": "evidence from the session", "repo": ""}
   ],
   "nothing_met_bar": false
 }

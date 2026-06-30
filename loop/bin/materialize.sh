@@ -25,7 +25,7 @@ for ((i=0; i<mlen && i<3; i++)); do
   body=$(printf '%s' "$m" | jq -r '.body // empty')
   why=$(printf '%s'  "$m" | jq -r '.why // empty')
   how=$(printf '%s'  "$m" | jq -r '.how_to_apply // empty')
-  loc=$(printf '%s'  "$m" | jq -r '.install_location // "global"')
+  repo=$(printf '%s' "$m" | jq -r '.repo // ""')
 
   [[ "$slug" =~ $kebab ]] || { log "  reject mem (slug '$slug')"; rej_m=$((rej_m+1)); continue; }
   case "$type" in user|feedback|project|reference) ;; *) log "  reject mem $slug (type '$type')"; rej_m=$((rej_m+1)); continue;; esac
@@ -37,16 +37,16 @@ for ((i=0; i<mlen && i<3; i++)); do
   if [ "$type" = feedback ] || [ "$type" = project ]; then [ -n "$why" ] && full="$full"$'\n\n'"**Why:** $why"; fi
   [ -n "$how" ] && full="$full"$'\n'"**How to apply:** $how"
 
-  if [ "$LOOP_MODE" = active ] && [ "$loc" = global ]; then
+  if [ "$LOOP_MODE" = active ]; then
     [ "$snapped_pre" = 0 ] && { mem_snapshot "pre-materialize-$session"; snapped_pre=1; }
     dest="$MEMORY_DIR/$slug.md"; whyfile=""; wrote_active=1
   else dest="$PENDING_MEM/$slug.md"; whyfile="$PENDING_MEM/$slug.WHY.md"; fi
   mkdir -p "$(dirname "$dest")"
   { printf -- '---\n'; printf 'name: %s\n' "$slug"; printf 'description: %s\n' "$(yqs "$desc")";
-    printf 'metadata:\n  node_type: memory\n  type: %s\n  originSessionId: %s\n' "$type" "$session";
+    printf 'metadata:\n'; [ -n "$repo" ] && printf '  repo: %s\n' "$repo"; printf '  node_type: memory\n  type: %s\n  originSessionId: %s\n' "$type" "$session";
     printf -- '---\n\n'; printf '%s\n' "$full"; } > "$dest"
-  [ -n "$whyfile" ] && printf 'source_session: %s\nrouting: %s\nwhy: %s\n' "$session" "$loc" "$why" > "$whyfile"
-  if [ "$LOOP_MODE" = active ] && [ "$loc" = global ]; then
+  [ -n "$whyfile" ] && printf 'source_session: %s\nrepo: %s\nwhy: %s\n' "$session" "$repo" "$why" > "$whyfile"
+  if [ "$LOOP_MODE" = active ]; then
     grep -q "($slug.md)" "$MEMORY_DIR/MEMORY.md" 2>/dev/null || printf -- '- [%s](%s.md) — %s\n' "$slug" "$slug" "$desc" >> "$MEMORY_DIR/MEMORY.md"
   fi
   log "  +mem $slug -> ${dest#$HOME/}"; acc_m=$((acc_m+1))
@@ -61,7 +61,7 @@ for ((i=0; i<slen && i<2; i++)); do
   when=$(printf '%s' "$s" | jq -r '.when_to_use // empty')
   body=$(printf '%s' "$s" | jq -r '.body // empty')
   why=$(printf '%s'  "$s" | jq -r '.why // empty')
-  loc=$(printf '%s'  "$s" | jq -r '.install_location // "global"')
+  repo=$(printf '%s' "$s" | jq -r '.repo // ""')
 
   [[ "$name" =~ $kebab ]] || { log "  reject skill (name '$name')"; rej_s=$((rej_s+1)); continue; }
   { [ -n "$desc" ] && [ -n "$when" ] && [ -n "$body" ]; } || { log "  reject skill $name (missing fields)"; rej_s=$((rej_s+1)); continue; }
@@ -71,7 +71,7 @@ for ((i=0; i<slen && i<2; i++)); do
   mkdir -p "$PENDING_SKILLS/$name"
   { printf -- '---\n'; printf 'name: %s\ndescription: %s\nwhen_to_use: %s\nuser-invocable: true\n' "$name" "$(yqs "$desc")" "$(yqs "$when")";
     printf -- '---\n\n'; printf '%s\n' "$body"; } > "$PENDING_SKILLS/$name/SKILL.md"
-  printf 'source_session: %s\ninstall_location: %s\nwhy: %s\n' "$session" "$loc" "$why" > "$PENDING_SKILLS/$name/WHY.md"
+  printf 'source_session: %s\nrepo: %s\nwhy: %s\n' "$session" "$repo" "$why" > "$PENDING_SKILLS/$name/WHY.md"
   log "  +skill $name -> pending"; acc_s=$((acc_s+1))
 done
 
