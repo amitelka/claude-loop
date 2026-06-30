@@ -67,7 +67,7 @@ for ((i=0; i<n && i<3; i++)); do
   why="$(printf '%s' "$c" | jq -r '.why // empty')"
 
   if [ "$action" = patch ]; then
-    [ -d "$SKILLS_DIR/$name" ] || [ -d "$PENDING_SKILLS/$name" ] || { echo "  note: patch target '$name' not found — staging anyway for review"; }
+    [ -f "$SKILLS_DIR/$name/SKILL.md" ] || { echo "  reject patch $name (no installed skill to patch — should be a new skill)"; rej=$((rej+1)); continue; }
     mkdir -p "$PENDING_SKILLS/$name"   # stage as a DIR so /review-skills + pending_skill_count see it
     { printf '# PATCH proposal for skill: %s\n\n%s\n\n## Proposed change\n%s\n\n%s\n' \
         "$name" "$desc" "$(printf '%s' "$c" | jq -r '.patch // empty')" "$meta"; } > "$PENDING_SKILLS/$name/PATCH.md"
