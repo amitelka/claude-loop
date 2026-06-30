@@ -94,6 +94,7 @@ PLIST
       | "  \(.uses)x  \(.skill)  (model:\(.model) user:\(.user))  last \(.last[0:10])"
     ' "$f" 2>/dev/null || echo "  (parse error)"
     ;;
+  mine-skills) bash "$LOOP_DIR/bin/mine-skills.sh" "$@";;
   snapshot) mem_snapshot "manual"; echo "memory-global snapshot committed";;
   mem-log)  mem_git log --oneline -20 2>/dev/null || echo "(no snapshots yet — run: loopctl snapshot)";;
   mem-diff) mem_git diff "${1:-HEAD}" 2>/dev/null || echo "(no snapshots yet)";;
@@ -118,5 +119,5 @@ PLIST
     elif [ "$((now - gok))" -gt 172800 ]; then wrn "last successful garden >48h ago ($(date -r "$gok" '+%F %H:%M')$gfr)"
     else okx "last garden ok: $(date -r "$gok" '+%F %H:%M')"; fi
     ;;
-  *) echo "usage: loopctl {status|stats|skill-stats|doctor|enable|disable|mode dry-run|active|review-now|snapshot|rollback <ref>|mem-log|mem-diff|install-schedule|uninstall-schedule|token}";;
+  *) echo "usage: loopctl {status|stats|skill-stats|mine-skills [--dry-run]|doctor|enable|disable|mode dry-run|active|review-now|snapshot|rollback <ref>|mem-log|mem-diff|install-schedule|uninstall-schedule|token}";;
 esac
