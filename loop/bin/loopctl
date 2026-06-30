@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # loopctl — control the self-improving loop. `loopctl` with no args shows status.
 set -uo pipefail
-. "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || { echo "loop not installed"; exit 1; }
+_loopdir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"   # bin/.. = loop dir (full-path / cwd invocation)
+[ -f "$_loopdir/lib.sh" ] || _loopdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/loop"   # invoked via a PATH symlink → fall back to the real loop dir
+. "$_loopdir/lib.sh" 2>/dev/null || { echo "loop not installed"; exit 1; }
 local_cfg="$LOOP_DIR/config.local.sh"   # personal overrides (gitignored), sourced last by config.sh
 set_cfg() { touch "$local_cfg"; if grep -q "^$1=" "$local_cfg" 2>/dev/null; then sed -i '' "s|^$1=.*|$1=$2|" "$local_cfg"; else printf '%s=%s\n' "$1" "$2" >> "$local_cfg"; fi; }
 
