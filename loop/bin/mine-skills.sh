@@ -5,15 +5,17 @@
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || exit 1
 export LOOP_REVIEWER=1
-dry=0; force=0; sched=0; for a in "$@"; do case "$a" in --dry-run) dry=1;; --force) force=1;; --scheduled) sched=1;; esac; done
-[ "$sched" = 1 ] && [ "${SKILL_MINER_ENABLED:-0}" != 1 ] && { log "mine-skills: scheduled but SKILL_MINER_ENABLED=0 — skip"; exit 0; }
+dry=0; force=0; sched=0; catchup=0; for a in "$@"; do case "$a" in --dry-run) dry=1;; --force) force=1;; --scheduled) sched=1;; --catch-up) catchup=1;; esac; done
+# --catch-up = self-heal mode (harvest, after a confirmed garden): bypasses the cadence floor (the corpus
+# just changed) but still honors enabled / skip-if-unchanged / rejected-dedup / store.lock — NOT blunt --force.
+{ [ "$sched" = 1 ] || [ "$catchup" = 1 ]; } && [ "${SKILL_MINER_ENABLED:-0}" != 1 ] && { log "mine-skills: unattended run but SKILL_MINER_ENABLED=0 — skip"; exit 0; }
 
 acquire_store_lock "mine-skills" || { log "mine-skills: memory store busy (garden or miner running) — skip"; echo "mine-skills: store busy — skip (retry later / after garden finishes)"; exit 0; }
 trap 'release_store_lock' EXIT
 
 STATE_FILE="$STATE_DIR/skill-miner.state.json"
 fp="$(miner_fingerprint)"
-if [ "$sched" = 1 ] && [ "$force" != 1 ]; then   # cadence rate-limit — scheduled runs only (manual is intentional)
+if [ "$sched" = 1 ] && [ "$catchup" != 1 ] && [ "$force" != 1 ]; then   # cadence rate-limit — scheduled only; --catch-up/manual/--force bypass it
   lat="$(jq -r '.last_success_at // 0' "$STATE_FILE" 2>/dev/null)"
   if [ "${lat:-0}" -gt 0 ] && [ "$(( $(date +%s) - lat ))" -lt "$(( ${SKILL_MINER_CADENCE_DAYS:-7} * 86400 ))" ]; then
     log "mine-skills: cadence ${SKILL_MINER_CADENCE_DAYS:-7}d not elapsed (last $(date -r "$lat" '+%F %H:%M' 2>/dev/null)) — skip"; exit 0
