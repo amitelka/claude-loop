@@ -53,12 +53,18 @@ PLIST
     }
     _agent io.claudeloop.harvest 2 30 "bash $LOOP_DIR/bin/harvest.sh"
     _agent io.claudeloop.garden  3 0  "bash $LOOP_DIR/bin/garden.sh"
+    if [ "${SKILL_MINER_ENABLED:-0}" = 1 ]; then
+      _agent io.claudeloop.mine-skills 4 0 "bash $LOOP_DIR/bin/mine-skills.sh --scheduled"   # after gardener (3:00); skip-if-unchanged + cadence keep it cheap
+    else
+      launchctl unload "$la/io.claudeloop.mine-skills.plist" 2>/dev/null; rm -f "$la/io.claudeloop.mine-skills.plist"
+      echo "  skill miner not scheduled (SKILL_MINER_ENABLED=0)"
+    fi
     echo "scheduled via launchd (daily; a run missed while asleep/off fires on next wake/login)."
     echo "NOTE: unattended runs need a subscription token — run: loopctl token"
     ;;
   uninstall-schedule)
     la="$HOME/Library/LaunchAgents"
-    for l in io.claudeloop.harvest io.claudeloop.garden; do
+    for l in io.claudeloop.harvest io.claudeloop.garden io.claudeloop.mine-skills; do
       launchctl unload "$la/$l.plist" 2>/dev/null
       rm -f "$la/$l.plist" && echo "removed $l"
     done;;
