@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deterministic gatekeeper + materializer: validate a reviewer proposal.json and
-# write the surviving memories/skills. The reviewer never writes files itself.
+# write the surviving memories. The reviewer never writes files itself.
 # Usage: materialize.sh <proposal.json> <session> <cwd>
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || exit 1
@@ -13,7 +13,7 @@ SECRET='sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|AKIA[0-9A-
 kebab='^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
 yqs() { local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }   # YAML-safe quoted string
 
-acc_m=0; rej_m=0; acc_s=0; rej_s=0; snapped_pre=0; wrote_active=0
+acc_m=0; rej_m=0; snapped_pre=0; wrote_active=0
 
 # ── memories (cap 3) ─────────────────────────────────────────────────────────
 mlen=$(jq '.memories|length' "$P" 2>/dev/null || echo 0)
@@ -53,31 +53,5 @@ for ((i=0; i<mlen && i<3; i++)); do
   log "  +mem $slug -> ${dest#$HOME/}"; acc_m=$((acc_m+1))
 done
 
-# ── skills (cap 2) — ALWAYS staged to pending, never auto-installed ───────────
-slen=$(jq '.skills|length' "$P" 2>/dev/null || echo 0)
-for ((i=0; i<slen && i<2; i++)); do
-  s=$(jq -c ".skills[$i]" "$P")
-  name=$(printf '%s' "$s" | jq -r '.name // empty')
-  desc=$(printf '%s' "$s" | jq -r '.description // empty')
-  when=$(printf '%s' "$s" | jq -r '.when_to_use // empty')
-  body=$(printf '%s' "$s" | jq -r '.body // empty')
-  why=$(printf '%s'  "$s" | jq -r '.why // empty')
-  repo=$(printf '%s' "$s" | jq -r '.repo // ""' | tr -d '\n' | sed 's#.*/##' | tr -cd 'a-zA-Z0-9._-' | cut -c1-48)
-
-  [[ "$name" =~ $kebab ]] || { log "  reject skill (name '$name')"; rej_s=$((rej_s+1)); continue; }
-  { [ -n "$desc" ] && [ -n "$when" ] && [ -n "$body" ]; } || { log "  reject skill $name (missing fields)"; rej_s=$((rej_s+1)); continue; }
-  evalok=$(printf '%s' "$s" | jq -r '(((.trigger_examples//[])|length)>0) and (((.expected_tools//[])|length)>0) and (((.replay_scenario//"")|length)>0)' 2>/dev/null)
-  [ "$evalok" = true ] || { log "  reject skill $name (1e eval-gate: missing trigger_examples/expected_tools/replay_scenario)"; rej_s=$((rej_s+1)); continue; }
-  if printf '%s' "$body $desc" | grep -qiE "$SECRET"; then log "  reject skill $name (secret-like)"; rej_s=$((rej_s+1)); continue; fi
-  if [ -d "$SKILLS_DIR/$name" ] || [ -d "$PENDING_SKILLS/$name" ]; then log "  skip skill $name (dup)"; rej_s=$((rej_s+1)); continue; fi
-
-  smeta=$(printf '%s' "$s" | jq -r '"## Triggers\n"+(((.trigger_examples//[])|map("- "+.))|join("\n"))+"\n\n## Negative triggers\n"+(((.negative_triggers//[])|map("- "+.))|join("\n"))+"\n\n## Expected tools\n"+((.expected_tools//[])|join(", "))+"\n\n## Expected output\n"+(.expected_output//"")+"\n\n## Replay scenario\n"+(.replay_scenario//"")')
-  mkdir -p "$PENDING_SKILLS/$name"
-  { printf -- '---\n'; printf 'name: %s\ndescription: %s\nwhen_to_use: %s\nuser-invocable: true\n' "$name" "$(yqs "$desc")" "$(yqs "$when")";
-    printf -- '---\n\n'; printf '%s\n\n%s\n' "$body" "$smeta"; } > "$PENDING_SKILLS/$name/SKILL.md"
-  printf 'source_session: %s\nrepo: %s\nwhy: %s\n' "$session" "$repo" "$why" > "$PENDING_SKILLS/$name/WHY.md"
-  log "  +skill $name -> pending"; acc_s=$((acc_s+1))
-done
-
 [ "$wrote_active" = 1 ] && mem_snapshot "post-materialize-$session"
-log "materialize: $session done mem(+$acc_m/-$rej_m) skill(+$acc_s/-$rej_s) mode=$LOOP_MODE"
+log "materialize: $session done mem(+$acc_m/-$rej_m) mode=$LOOP_MODE"
