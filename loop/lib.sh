@@ -72,3 +72,21 @@ miner_fingerprint() {
   ph="$(shasum "$LOOP_DIR/prompts/mine-skills.md" 2>/dev/null | awk '{print $1}')"
   printf '%s|%s|%s|%s' "$mh" "$sh" "${uh:-none}" "${ph:-none}" | shasum | awk '{print $1}'
 }
+
+# Rejected-proposal denylist (keyed name+action) so the miner stops re-proposing ideas you've
+# already declined at /review-skills. Visible + clearable — not a silent permanent ban.
+REJECT_FILE_NAME="skill-rejections.tsv"   # rows: name<TAB>action<TAB>epoch
+skill_is_rejected() {  # $1=name $2=action ; exit 0 if present
+  local f="$STATE_DIR/$REJECT_FILE_NAME"; [ -f "$f" ] || return 1
+  awk -F'\t' -v n="$1" -v a="${2:-new}" '$1==n && $2==a{f=1} END{exit !f}' "$f"
+}
+skill_reject_add() {  # $1=name $2=action
+  local name="$1" action="${2:-new}"; mkdir -p "$STATE_DIR"
+  skill_is_rejected "$name" "$action" && return 0
+  printf '%s\t%s\t%s\n' "$name" "$action" "$(date +%s)" >> "$STATE_DIR/$REJECT_FILE_NAME"
+}
+skill_reject_rm() {  # $1=name $2=action
+  local name="$1" action="${2:-new}" f="$STATE_DIR/$REJECT_FILE_NAME" t
+  [ -f "$f" ] || return 0
+  t="$(mktemp)"; awk -F'\t' -v n="$name" -v a="$action" '!($1==n && $2==a)' "$f" > "$t" && mv "$t" "$f"
+}

@@ -18,7 +18,7 @@ The self-improving loop stages candidate skills in `~/.claude/loop/pending/skill
    - **new skill** (`SKILL.md`): `mv` the proposal dir to `~/.claude/skills/<name>/` (always global — any `repo` tag in `WHY.md` is advisory, never a separate location).
    - **patch** (`PATCH.md`): run `bash ~/.claude/loop/bin/loopctl skill-snapshot` first (so it's revertable via `loopctl skill-rollback`), then apply the change in `PATCH.md` to `~/.claude/skills/<name>/SKILL.md`, and remove the pending dir. If the target skill is a **symlink** (externally-managed, e.g. `external-skill`→its own repo), the edit lands in that repo — it's versioned there, not by `skill-rollback`.
    - Either way, drop the now-redundant `WHY.md`.
-6. On **reject**: move the proposal dir to `~/.claude/loop/archive/rejected/<name>-<date>/` so it isn't re-proposed.
+6. On **reject**: first record it so the miner won't re-derive it next run — `bash ~/.claude/loop/bin/loopctl skill-reject <name> <action>` (`<action>` is `patch` if the dir has `PATCH.md`, else `new`). Then move the proposal dir to `~/.claude/loop/archive/rejected/<name>-<date>/`. Archiving alone does **not** prevent re-proposal — the miner re-derives skills from memory each run, so `skill-reject` is what suppresses it (undo later with `loopctl skill-unreject <name> <action>`).
 7. Summarize what was installed and what was archived.
 
 Never auto-approve — always get the user's call. If a `SKILL.md` contains a secret or token, do not install it; flag it for the user.

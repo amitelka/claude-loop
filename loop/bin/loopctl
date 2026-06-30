@@ -101,6 +101,17 @@ PLIST
     skill_snapshot "pre-rollback"
     skill_git checkout "$ref" -- . && echo "skills restored to $ref (prior state snapshotted first)";;
   skill-curate) bash "$LOOP_DIR/bin/skill-curate.sh";;
+  skill-reject)
+    n="${1:-}"; a="${2:-new}"; [ -n "$n" ] || { echo "usage: loopctl skill-reject <name> [new|patch]"; exit 1; }
+    skill_reject_add "$n" "$a"; echo "rejected: $n ($a) — miner will suppress it (undo: loopctl skill-unreject $n $a)";;
+  skill-unreject)
+    n="${1:-}"; a="${2:-new}"; [ -n "$n" ] || { echo "usage: loopctl skill-unreject <name> [new|patch]"; exit 1; }
+    skill_reject_rm "$n" "$a"; echo "un-rejected: $n ($a) — miner may propose it again";;
+  skill-rejections)
+    f="$STATE_DIR/$REJECT_FILE_NAME"
+    if [ -s "$f" ]; then echo "rejected skill proposals (suppressed from mining):"
+      while IFS="$(printf '\t')" read -r n a e; do printf '  %-40s %-6s rejected %s\n' "$n" "$a" "$(date -r "${e:-0}" '+%F' 2>/dev/null || echo '?')"; done < "$f"
+    else echo "no rejected skill proposals"; fi;;
   snapshot) mem_snapshot "manual"; echo "memory-global snapshot committed";;
   mem-log)  mem_git log --oneline -20 2>/dev/null || echo "(no snapshots yet — run: loopctl snapshot)";;
   mem-diff) mem_git diff "${1:-HEAD}" 2>/dev/null || echo "(no snapshots yet)";;

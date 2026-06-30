@@ -55,7 +55,7 @@ fi
 
 n=$(jq '.candidates|length' "$proposal" 2>/dev/null || echo 0)
 echo "mine-skills: $n candidate(s)$([ "$dry" = 1 ] && printf '  [DRY-RUN — nothing staged]')  (cost=${cost:-?})"
-staged=0; rej=0
+staged=0; rej=0; supp=""
 for ((i=0; i<n && i<3; i++)); do
   c=$(jq -c ".candidates[$i]" "$proposal")
   action=$(printf '%s' "$c" | jq -r '.action // "new"'); case "$action" in new|patch) ;; *) action=new ;; esac
@@ -66,6 +66,9 @@ for ((i=0; i<n && i<3; i++)); do
   if printf '%s' "$c" | grep -qiE "$SECRET"; then echo "  reject $name (secret-like)"; rej=$((rej+1)); continue; fi
   evalok=$(printf '%s' "$c" | jq -r '(((.trigger_examples//[])|length)>0) and (((.expected_tools//[])|length)>0) and (((.replay_scenario//"")|length)>0)' 2>/dev/null)
   [ "$evalok" = true ] || { echo "  reject $name (1e eval-gate: needs trigger_examples + expected_tools + replay_scenario)"; rej=$((rej+1)); continue; }
+  if [ "$force" != 1 ] && skill_is_rejected "$name" "$action"; then
+    echo "  suppressed $name ($action — previously rejected; loopctl skill-unreject $name $action to allow)"; supp="$supp${supp:+, }$name"; continue
+  fi
 
   if [ "$dry" = 1 ]; then
     echo "  [$action] $name — $desc"
@@ -102,7 +105,8 @@ for ((i=0; i<n && i<3; i++)); do
   fi
   staged=$((staged+1))
 done
-log "mine-skills: done candidates=$n staged=$staged rejected=$rej dry=$dry cost=${cost:-?}"
+log "mine-skills: done candidates=$n staged=$staged rejected=$rej suppressed=[$supp] dry=$dry cost=${cost:-?}"
+[ -n "$supp" ] && echo "mine-skills: suppressed previously-rejected: $supp (see loopctl skill-rejections)"
 [ "$dry" = 0 ] && jq -n --arg fp "$fp" --argjson at "$(date +%s)" --arg p "$proposal" \
   '{last_fingerprint:$fp, last_success_at:$at, last_proposal_path:$p}' > "$STATE_FILE"
 [ "$dry" = 1 ] && echo "(dry-run — re-run without --dry-run to stage, then triage with /review-skills)"
