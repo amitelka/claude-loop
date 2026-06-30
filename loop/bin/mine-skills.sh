@@ -21,9 +21,9 @@ prompt="${prompt//'{{SKILL_USES}}'/$STATE_DIR/skill-uses.jsonl}"
 prompt="${prompt//'{{PROPOSAL_FILE}}'/$proposal}"
 
 guard_before="$(loop_manifest)"   # miner may write ONLY its proposal file (in proposals/, not fingerprinted)
-log "mine-skills: start model=$GARDENER_MODEL dry=$dry"
+log "mine-skills: start model=$SKILL_MINER_MODEL dry=$dry"
 raw="$(printf '%s' "$prompt" | claude -p \
-  --model "$GARDENER_MODEL" --effort "$GARDENER_EFFORT" \
+  --model "$SKILL_MINER_MODEL" --effort "$SKILL_MINER_EFFORT" \
   --permission-mode bypassPermissions --add-dir "$CLAUDE_HOME" \
   --no-session-persistence --output-format json \
   --allowedTools Read Grep Glob Write 2>/dev/null)"

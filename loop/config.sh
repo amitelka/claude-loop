@@ -17,6 +17,13 @@ REVIEWER_EFFORT=high
 GARDENER_MODEL=opus
 GARDENER_EFFORT=xhigh
 
+# ── Skill miner (cross-corpus skill/patch proposer; manual or scheduled) ──────
+SKILL_MINER_ENABLED=0          # 0 = no scheduled run; install-schedule skips it. Enable per machine.
+SKILL_MINER_MODEL=opus
+SKILL_MINER_EFFORT=high
+SKILL_MINER_CADENCE_DAYS=7     # scheduled cadence; skip-if-unchanged makes most runs cheap no-ops
+SKILL_MINER_ONLY_IF_CHANGED=1  # scheduled runs skip when inputs unchanged since last success (--force overrides)
+
 # ── Bounds ────────────────────────────────────────────────────────────────────
 MEMORY_INDEX_MAX_LINES=180
 
