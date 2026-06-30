@@ -2,7 +2,7 @@
 # Nightly backstop: review sessions with un-reviewed activity (caught below the
 # per-turn threshold, or that ended). Shares the watermark with the Stop hook.
 set -uo pipefail
-. "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || exit 1
+. "$HOME/.claude/loop/lib.sh" 2>/dev/null || exit 1
 
 proj_root="$CLAUDE_HOME/projects"
 find "$proj_root" -name '*.jsonl' -type f -mtime -2 -not -path '*/subagents/*' -not -path '*/workflows/*' 2>/dev/null | while read -r t; do
@@ -31,9 +31,21 @@ done
 now="$(date +%s)"
 gok="$(cat "$STATE_DIR/garden.success" 2>/dev/null || echo 0)"
 gtry="$(cat "$STATE_DIR/garden.catchup" 2>/dev/null || echo 0)"
+gcaught=0
 if [ "$((now - gok))" -gt 86400 ] && [ "$((now - gtry))" -gt 21600 ]; then
   echo "$now" > "$STATE_DIR/garden.catchup"
   log "harvest: garden stale (last ok $(date -r "$gok" '+%F %H:%M' 2>/dev/null || echo never)) — running catch-up"
   bash "$LOOP_DIR/bin/garden.sh" --catch-up
+  gcaught=1
+fi
+
+# Miner catch-up — ONLY after a garden catch-up just ran (the self-heal scenario), so it runs in
+# sequence on a freshly-gardened corpus. garden.sh above is synchronous and releases store.lock before
+# this returns, so the two never overlap. Normal nights: the miner's own 04:00 agent handles it (this
+# stays dormant since garden isn't stale). The miner self-gates (enabled / cadence / skip-if-unchanged /
+# store.lock), so even here it's a cheap no-op unless a real mine is due.
+if [ "$gcaught" = 1 ] && [ "${SKILL_MINER_ENABLED:-0}" = 1 ]; then
+  log "harvest: miner catch-up (sequenced after garden)"
+  bash "$LOOP_DIR/bin/mine-skills.sh" --scheduled
 fi
 log "harvest: nightly pass complete"
