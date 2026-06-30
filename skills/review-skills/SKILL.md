@@ -7,14 +7,17 @@ user-invocable: true
 
 # Review pending skill proposals
 
-The self-improving loop stages candidate skills in `~/.claude/loop/pending/skills/<name>/` (each has `SKILL.md` + `WHY.md`). Walk the user through them and act on their decision.
+The self-improving loop stages candidate skills in `~/.claude/loop/pending/skills/<name>/`. Each dir has a `WHY.md` plus **either** `SKILL.md` (a brand-new skill) **or** `PATCH.md` (a proposed change to an existing installed skill). Walk the user through them and act on their decision.
 
 ## Steps
 1. List proposals: `ls -d ~/.claude/loop/pending/skills/*/ 2>/dev/null`. If none, say so and stop.
-2. For each, Read both `SKILL.md` and `WHY.md`. Present concisely: the skill name, what it does (description + the key steps), the `repo` tag (if any) from `WHY.md`, and the source session + rationale.
+2. For each pending dir, Read `WHY.md` and **either** `SKILL.md` (new skill) **or** `PATCH.md` (a patch — also Read the *installed* skill it targets, `~/.claude/skills/<name>/SKILL.md`, to judge the change in context). Present concisely: the name, new-skill-vs-patch, what it does / what the patch changes, the `repo` tag from `WHY.md`, and the source session + rationale.
 3. Give your own quick read: is it genuinely reusable and correct, or thin/duplicative? Check it doesn't duplicate an existing skill (`ls ~/.claude/skills`).
 4. Ask the user to approve or reject each (offer to batch).
-5. On **approve**: install to `~/.claude/skills/<name>/` (always global — any `repo` tag in `WHY.md` is advisory only, never a separate location); `mv` the proposal dir there. Drop the now-redundant `WHY.md` (or keep it inside — your call, but it isn't needed at runtime).
+5. On **approve**:
+   - **new skill** (`SKILL.md`): `mv` the proposal dir to `~/.claude/skills/<name>/` (always global — any `repo` tag in `WHY.md` is advisory, never a separate location).
+   - **patch** (`PATCH.md`): run `bash ~/.claude/loop/bin/loopctl skill-snapshot` first (so it's revertable via `loopctl skill-rollback`), then apply the change in `PATCH.md` to `~/.claude/skills/<name>/SKILL.md`, and remove the pending dir. If the target skill is a **symlink** (externally-managed, e.g. `external-skill`→its own repo), the edit lands in that repo — it's versioned there, not by `skill-rollback`.
+   - Either way, drop the now-redundant `WHY.md`.
 6. On **reject**: move the proposal dir to `~/.claude/loop/archive/rejected/<name>-<date>/` so it isn't re-proposed.
 7. Summarize what was installed and what was archived.
 

@@ -39,7 +39,7 @@ if [ "$guard_before" != "$(loop_manifest)" ]; then
 fi
 
 n=$(jq '.candidates|length' "$proposal" 2>/dev/null || echo 0)
-echo "mine-skills: $n candidate(s)${dry:+  [DRY-RUN — nothing staged]}  (cost=${cost:-?})"
+echo "mine-skills: $n candidate(s)$([ "$dry" = 1 ] && printf '  [DRY-RUN — nothing staged]')  (cost=${cost:-?})"
 staged=0; rej=0
 for ((i=0; i<n && i<3; i++)); do
   c=$(jq -c ".candidates[$i]" "$proposal")
@@ -68,11 +68,11 @@ for ((i=0; i<n && i<3; i++)); do
 
   if [ "$action" = patch ]; then
     [ -d "$SKILLS_DIR/$name" ] || [ -d "$PENDING_SKILLS/$name" ] || { echo "  note: patch target '$name' not found — staging anyway for review"; }
-    pf="$PENDING_SKILLS/$name.PATCH.md"
+    mkdir -p "$PENDING_SKILLS/$name"   # stage as a DIR so /review-skills + pending_skill_count see it
     { printf '# PATCH proposal for skill: %s\n\n%s\n\n## Proposed change\n%s\n\n%s\n' \
-        "$name" "$desc" "$(printf '%s' "$c" | jq -r '.patch // empty')" "$meta"; } > "$pf"
-    printf 'source_memories: %s\nwhy: %s\n' "$srcs" "$why" > "$PENDING_SKILLS/$name.WHY.md"
-    echo "  +patch $name -> pending/skills/$name.PATCH.md"
+        "$name" "$desc" "$(printf '%s' "$c" | jq -r '.patch // empty')" "$meta"; } > "$PENDING_SKILLS/$name/PATCH.md"
+    printf 'source_memories: %s\nwhy: %s\n' "$srcs" "$why" > "$PENDING_SKILLS/$name/WHY.md"
+    echo "  +patch $name -> pending/skills/$name/PATCH.md"
   else
     { [ -d "$SKILLS_DIR/$name" ] || [ -d "$PENDING_SKILLS/$name" ]; } && { echo "  skip $name (exists — should be a patch)"; rej=$((rej+1)); continue; }
     mkdir -p "$PENDING_SKILLS/$name"
