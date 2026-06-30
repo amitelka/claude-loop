@@ -53,7 +53,11 @@ acquire_store_lock() {  # $1 = holder label
   printf '%s %s %s\n' "$holder" "$$" "$now" > "$lock/owner" 2>/dev/null
   log "store-lock: $holder stole stale lock (age ${age}s, was '${old:-?}')"; return 0
 }
-release_store_lock() { rm -rf "$STATE_DIR/store.lock" 2>/dev/null; }
+release_store_lock() {  # release ONLY if we still hold it — a stale-steal may have reassigned it to another pid
+  local f="$STATE_DIR/store.lock/owner"
+  [ -f "$f" ] && [ "$(awk '{print $2}' "$f" 2>/dev/null)" != "$$" ] && return 0
+  rm -rf "$STATE_DIR/store.lock" 2>/dev/null
+}
 
 # Fingerprint of the dirs the reviewer must NOT touch (memory-global + pending + installed skills).
 # review.sh asserts this is unchanged across the reviewer run — it may write only its proposal artifact.
@@ -61,16 +65,18 @@ loop_manifest() {
   find "$MEMORY_DIR" "$PENDING_MEM" "$PENDING_SKILLS" "$SKILLS_DIR" -type f -exec stat -f '%N|%m|%z' {} + 2>/dev/null | LC_ALL=C sort | shasum | awk '{print $1}'
 }
 
-# Skip-if-unchanged fingerprint for the skill miner — the meaningful INPUTS only. Deliberately NOT
-# pending/skills: staging proposals is an OUTPUT of mining, so including it would self-invalidate the
-# skip (mine → stage → fingerprint moves → mine again). Content-derived, order-stable.
+# Skip-if-unchanged fingerprint for the skill miner — the meaningful INPUTS only. Hashes the file
+# CONTENT of memory-global + installed skills (NOT git HEAD: the miner reads the working tree, so
+# hand-edited/uncommitted/untracked memories must register), plus usage + prompt. Deliberately
+# excludes pending/skills: staging proposals is an OUTPUT, so including it would self-invalidate the
+# skip (mine → stage → fingerprint moves → mine again). Content-derived, order-stable, mtime-agnostic.
 miner_fingerprint() {
   local mh sh uh ph
-  mh="$(mem_git rev-parse HEAD 2>/dev/null || echo none)"
-  sh="$(skill_git rev-parse HEAD 2>/dev/null || echo none)"
+  mh="$(find "$MEMORY_DIR" -type f -name '*.md' -not -path '*/.git/*' -exec shasum {} + 2>/dev/null | awk '{print $1}' | LC_ALL=C sort | shasum | awk '{print $1}')"
+  sh="$(find "$SKILLS_DIR" -type f -name '*.md' -not -path '*/.git/*' -exec shasum {} + 2>/dev/null | awk '{print $1}' | LC_ALL=C sort | shasum | awk '{print $1}')"
   uh="$(shasum "$STATE_DIR/skill-uses.jsonl" 2>/dev/null | awk '{print $1}')"
   ph="$(shasum "$LOOP_DIR/prompts/mine-skills.md" 2>/dev/null | awk '{print $1}')"
-  printf '%s|%s|%s|%s' "$mh" "$sh" "${uh:-none}" "${ph:-none}" | shasum | awk '{print $1}'
+  printf '%s|%s|%s|%s' "${mh:-none}" "${sh:-none}" "${uh:-none}" "${ph:-none}" | shasum | awk '{print $1}'
 }
 
 # Rejected-proposal denylist (keyed name+action) so the miner stops re-proposing ideas you've

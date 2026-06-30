@@ -64,7 +64,9 @@ PLIST
     ;;
   uninstall-schedule)
     la="$HOME/Library/LaunchAgents"
-    for l in io.claudeloop.harvest io.claudeloop.garden io.claudeloop.mine-skills; do
+    for l in io.claudeloop.harvest io.claudeloop.garden io.claudeloop.mine-skills \
+             io.legacy.claudeloop.harvest io.legacy.claudeloop.garden io.legacy.claudeloop.mine-skills; do
+      [ -f "$la/$l.plist" ] || continue
       launchctl unload "$la/$l.plist" 2>/dev/null
       rm -f "$la/$l.plist" && echo "removed $l"
     done;;
@@ -108,7 +110,9 @@ PLIST
     skill_git checkout "$ref" -- . && echo "skills restored to $ref (prior state snapshotted first)";;
   skill-curate) bash "$LOOP_DIR/bin/skill-curate.sh";;
   skill-reject)
-    n="${1:-}"; a="${2:-new}"; [ -n "$n" ] || { echo "usage: loopctl skill-reject <name> [new|patch]"; exit 1; }
+    n="${1:-}"; [ -n "$n" ] || { echo "usage: loopctl skill-reject <name> [new|patch]"; exit 1; }
+    a="${2:-}"; [ -n "$a" ] || { [ -f "$PENDING_SKILLS/$n/PATCH.md" ] && a=patch || a=new; }   # derive from the pending proposal when omitted (PATCH.md → patch)
+    case "$a" in new|patch) ;; *) echo "action must be new|patch (got '$a')"; exit 1;; esac
     skill_reject_add "$n" "$a"; echo "rejected: $n ($a) — miner will suppress it (undo: loopctl skill-unreject $n $a)";;
   skill-unreject)
     n="${1:-}"; a="${2:-new}"; [ -n "$n" ] || { echo "usage: loopctl skill-unreject <name> [new|patch]"; exit 1; }
@@ -131,8 +135,17 @@ PLIST
     for hk in Stop SessionStart SessionEnd PostToolUse UserPromptExpansion; do jq -e ".hooks.$hk" "$CLAUDE_HOME/settings.json" >/dev/null 2>&1 && okx "hook $hk wired" || wrn "hook $hk MISSING"; done
     la=$(launchctl list 2>/dev/null | grep -c claudeloop); [ "${la:-0}" -ge 2 ] && okx "launchd: $la agents loaded" || wrn "launchd: ${la:-0}/2 (run: loopctl install-schedule)"
     dd=$(mem_git status --porcelain 2>/dev/null | wc -l | tr -d ' '); [ "${dd:-0}" = 0 ] && okx "memory-global clean" || wrn "memory-global: $dd uncommitted (loopctl snapshot)"
-    sl=$(find "$STATE_DIR" -name '*.lock' -type d -mmin +30 2>/dev/null)
-    if [ -n "$sl" ]; then printf '%s\n' "$sl" | xargs rm -rf 2>/dev/null; wrn "cleared $(printf '%s\n' "$sl" | wc -l | tr -d ' ') stale lock(s)"; else okx "no stale locks"; fi
+    now="$(date +%s)"; sl=""
+    for lk in "$STATE_DIR"/*.lock; do
+      [ -d "$lk" ] || continue
+      oe="$(awk '{print $3}' "$lk/owner" 2>/dev/null)"
+      if printf '%s' "$oe" | grep -qE '^[0-9]+$'; then
+        [ "$(( now - oe ))" -gt "${STALE_LOCK_SECS:-7200}" ] && sl="$sl $lk"                  # owner-bearing (store.lock): honor the lock-protocol threshold, not 30m — a live long garden must not be reaped
+      else
+        [ -n "$(find "$lk" -maxdepth 0 -type d -mmin +30 2>/dev/null)" ] && sl="$sl $lk"       # ownerless session locks: 30m mtime
+      fi
+    done
+    if [ -n "$sl" ]; then echo "$sl" | xargs rm -rf 2>/dev/null; wrn "cleared stale lock(s):$sl"; else okx "no stale locks"; fi
     if [ -f "$ENV_FILE" ]; then case "$(stat -f '%Sp' "$ENV_FILE" 2>/dev/null)" in -rw-------) okx "token present (perms 600)";; *) wrn "token perms not 600";; esac; else wrn "token missing (loopctl token — needed for cron)"; fi
     for t in claude jq perl; do command -v "$t" >/dev/null 2>&1 && okx "tool $t" || wrn "tool $t MISSING"; done
     lh=$(grep 'harvest: nightly pass complete' "$LOG" 2>/dev/null | tail -1 | cut -c1-19); [ -n "$lh" ] && okx "last harvest complete: $lh" || wrn "no completed harvest yet"
