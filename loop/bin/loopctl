@@ -82,6 +82,18 @@ PLIST
     echo "mem git : $(mem_git status --porcelain 2>/dev/null | wc -l | tr -d ' ') uncommitted, $(mem_git rev-list --count HEAD 2>/dev/null || echo 0) snapshots"
     echo "outcomes: +mem=$(grep -c '  +mem ' "$l" 2>/dev/null) +skill=$(grep -c '  +skill ' "$l" 2>/dev/null) dup-skip=$(grep -cE '  skip (mem|skill) .*dup' "$l" 2>/dev/null) rejected=$(grep -cE '  reject (mem|skill)' "$l" 2>/dev/null) anomalies=$(grep -c 'ANOMALY' "$l" 2>/dev/null)"
     ;;
+  skill-stats)
+    f="$STATE_DIR/skill-uses.jsonl"; [ -s "$f" ] || { echo "no skill usage logged yet ($f)"; exit 0; }
+    echo "── skill usage (built-in commands excluded) ──"
+    jq -s -r '
+      (["clear","config","compact","context","help","usage","cost","model","resume","exit","quit","status","login","logout","doctor","mcp","memory","agents","hooks","permissions","vim","terminal-setup","bug","release-notes","add-dir","ide","insights","goal"]) as $b
+      | map(select(.skill as $s | ($b | index($s)) | not))
+      | group_by(.skill)
+      | map({skill:.[0].skill, uses:length, model:(map(select(.via=="model"))|length), user:(map(select(.via=="user"))|length), last:(max_by(.ts).ts)})
+      | sort_by(-.uses)[]
+      | "  \(.uses)x  \(.skill)  (model:\(.model) user:\(.user))  last \(.last[0:10])"
+    ' "$f" 2>/dev/null || echo "  (parse error)"
+    ;;
   snapshot) mem_snapshot "manual"; echo "memory-global snapshot committed";;
   mem-log)  mem_git log --oneline -20 2>/dev/null || echo "(no snapshots yet — run: loopctl snapshot)";;
   mem-diff) mem_git diff "${1:-HEAD}" 2>/dev/null || echo "(no snapshots yet)";;
@@ -92,7 +104,7 @@ PLIST
   doctor)
     okx(){ echo "  ✓ $1"; }; wrn(){ echo "  ⚠ $1"; }
     echo "── loop doctor ──"
-    for hk in Stop SessionStart SessionEnd; do jq -e ".hooks.$hk" "$CLAUDE_HOME/settings.json" >/dev/null 2>&1 && okx "hook $hk wired" || wrn "hook $hk MISSING"; done
+    for hk in Stop SessionStart SessionEnd PostToolUse UserPromptExpansion; do jq -e ".hooks.$hk" "$CLAUDE_HOME/settings.json" >/dev/null 2>&1 && okx "hook $hk wired" || wrn "hook $hk MISSING"; done
     la=$(launchctl list 2>/dev/null | grep -c claudeloop); [ "${la:-0}" -ge 2 ] && okx "launchd: $la agents loaded" || wrn "launchd: ${la:-0}/2 (run: loopctl install-schedule)"
     dd=$(mem_git status --porcelain 2>/dev/null | wc -l | tr -d ' '); [ "${dd:-0}" = 0 ] && okx "memory-global clean" || wrn "memory-global: $dd uncommitted (loopctl snapshot)"
     sl=$(find "$STATE_DIR" -name '*.lock' -type d -mmin +30 2>/dev/null)
@@ -106,5 +118,5 @@ PLIST
     elif [ "$((now - gok))" -gt 172800 ]; then wrn "last successful garden >48h ago ($(date -r "$gok" '+%F %H:%M')$gfr)"
     else okx "last garden ok: $(date -r "$gok" '+%F %H:%M')"; fi
     ;;
-  *) echo "usage: loopctl {status|stats|doctor|enable|disable|mode dry-run|active|review-now|snapshot|rollback <ref>|mem-log|mem-diff|install-schedule|uninstall-schedule|token}";;
+  *) echo "usage: loopctl {status|stats|skill-stats|doctor|enable|disable|mode dry-run|active|review-now|snapshot|rollback <ref>|mem-log|mem-diff|install-schedule|uninstall-schedule|token}";;
 esac

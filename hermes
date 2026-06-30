@@ -20,7 +20,7 @@ SETTINGS="$CLAUDE_HOME/settings.json"
 die(){ echo "error: $*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "missing required tool: $1"; }
 
-# Idempotently (re)point the 3 loop hooks at $LOOP, preserving all other settings and foreign hooks.
+# Idempotently (re)point the loop hooks at $LOOP, preserving all other settings and foreign hooks.
 merge_hooks(){
   need jq
   [ -f "$SETTINGS" ] || { mkdir -p "$CLAUDE_HOME"; echo '{}' > "$SETTINGS"; }
@@ -30,10 +30,16 @@ merge_hooks(){
       .hooks[$ev] = (((.hooks[$ev] // [])
         | map(select(((.hooks // []) | map(.command) | join(" ")) | contains($f) | not)))
         + [{"hooks":[{"type":"command","command":("bash " + $base + "/hooks/" + $f)}]}]);
+    def putm($ev; $f; $m):    # matcher-aware variant (PostToolUse/UserPromptExpansion need a matcher)
+      .hooks[$ev] = (((.hooks[$ev] // [])
+        | map(select(((.hooks // []) | map(.command) | join(" ")) | contains($f) | not)))
+        + [{"matcher":$m, "hooks":[{"type":"command","command":("bash " + $base + "/hooks/" + $f)}]}]);
     .hooks = (.hooks // {})
     | put("Stop"; "on-stop.sh")
     | put("SessionStart"; "on-session-start.sh")
     | put("SessionEnd"; "on-session-end.sh")
+    | putm("PostToolUse"; "on-skill-use.sh"; "Skill")
+    | putm("UserPromptExpansion"; "on-skill-use.sh"; ".*")
   ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS" || die "settings.json hook-merge failed"
 }
 
@@ -44,7 +50,7 @@ unmerge_hooks(){
     def rm($ev; $f):
       .hooks[$ev] = ((.hooks[$ev] // []) | map(select(((.hooks // []) | map(.command) | join(" ")) | contains($f) | not)))
       | if (.hooks[$ev] // [] | length) == 0 then del(.hooks[$ev]) else . end;
-    if .hooks then rm("Stop";"on-stop.sh") | rm("SessionStart";"on-session-start.sh") | rm("SessionEnd";"on-session-end.sh") else . end
+    if .hooks then rm("Stop";"on-stop.sh") | rm("SessionStart";"on-session-start.sh") | rm("SessionEnd";"on-session-end.sh") | rm("PostToolUse";"on-skill-use.sh") | rm("UserPromptExpansion";"on-skill-use.sh") else . end
   ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
 }
 
