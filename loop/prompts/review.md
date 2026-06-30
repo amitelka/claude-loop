@@ -21,7 +21,7 @@ Use the **Write** tool to create the file `{{PROPOSAL_FILE}}`. Its entire conten
   "session": "{{SESSION}}",
   "cwd": "{{CWD}}",
   "memories": [
-    {"slug": "kebab-case-slug", "type": "user|feedback|project|reference", "description": "one-line recall hook", "body": "the markdown fact", "why": "why it is durable/reusable", "how_to_apply": "how future sessions should use it (may be empty)", "repo": ""}
+    {"slug": "kebab-case-slug", "type": "user|feedback|project|reference", "description": "one-line recall hook", "body": "ONLY the fact/content — do NOT write **Why:** or **How to apply:** sections here", "why": "why it is durable/reusable", "how_to_apply": "how future sessions should use it (may be empty)", "repo": ""}
   ],
   "skills": [
     {"name": "kebab-case-name", "description": "trigger-friendly one-liner", "when_to_use": "when this should fire", "body": "numbered steps", "why": "evidence from the session", "repo": ""}
@@ -31,3 +31,4 @@ Use the **Write** tool to create the file `{{PROPOSAL_FILE}}`. Its entire conten
 
 Write ONLY that one file — do not write or edit anything else, anywhere. After writing it, stop.
 Limits: at most 3 memories and 2 skills. If nothing clears the bar, still write the file, with empty arrays and `"nothing_met_bar": true`.
+Field rule: `body` carries the fact ONLY. The gatekeeper formats `why` → a **Why:** line and `how_to_apply` → a **How to apply:** line itself — so writing those sections into `body` just duplicates them (the gardener then has to clean it up).
