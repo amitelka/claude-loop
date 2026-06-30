@@ -53,10 +53,11 @@ acquire_store_lock() {  # $1 = holder label
   printf '%s %s %s\n' "$holder" "$$" "$now" > "$lock/owner" 2>/dev/null
   log "store-lock: $holder stole stale lock (age ${age}s, was '${old:-?}')"; return 0
 }
-release_store_lock() {  # release ONLY if we still hold it — a stale-steal may have reassigned it to another pid
-  local f="$STATE_DIR/store.lock/owner"
-  [ -f "$f" ] && [ "$(awk '{print $2}' "$f" 2>/dev/null)" != "$$" ] && return 0
-  rm -rf "$STATE_DIR/store.lock" 2>/dev/null
+release_store_lock() {  # release ONLY if we can PROVE we own it (owner present AND pid==$$). Missing/other
+  # owner → leave it: a stale-steal or mid-acquire race may legitimately own it. A truly-ours-but-lost
+  # owner just leaks until the 2h stale-steal reclaims it — safe.
+  [ "$(awk '{print $2}' "$STATE_DIR/store.lock/owner" 2>/dev/null)" = "$$" ] && rm -rf "$STATE_DIR/store.lock" 2>/dev/null
+  return 0
 }
 
 # Fingerprint of the dirs the reviewer must NOT touch (memory-global + pending + installed skills).
