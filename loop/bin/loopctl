@@ -124,6 +124,12 @@ PLIST
     if [ "${gok:-0}" = 0 ]; then wrn "no successful garden recorded yet$gfr"
     elif [ "$((now - gok))" -gt 172800 ]; then wrn "last successful garden >48h ago ($(date -r "$gok" '+%F %H:%M')$gfr)"
     else okx "last garden ok: $(date -r "$gok" '+%F %H:%M')"; fi
+    si=$(find -L "$SKILLS_DIR" -mindepth 2 -maxdepth 2 -name SKILL.md 2>/dev/null | wc -l | tr -d ' ')
+    nm=$(find -L "$SKILLS_DIR" -mindepth 2 -maxdepth 2 -name SKILL.md -exec grep -L '^## Triggers' {} + 2>/dev/null | wc -l | tr -d ' ')
+    sp=$(pending_skill_count); su=0; [ -f "$STATE_DIR/skill-uses.jsonl" ] && su=$(wc -l < "$STATE_DIR/skill-uses.jsonl" | tr -d ' ')
+    echo "  • skills: ${si:-0} installed · ${sp:-0} pending · ${su:-0} usage event(s) · ${nm:-0} missing eval-metadata"
+    [ "${sp:-0}" -gt 0 ] && wrn "$sp skill proposal(s) pending → /review-skills"
+    echo "    (never-used / stale / archive candidates deferred until telemetry matures — detail: loopctl skill-curate)"
     ;;
   *) echo "usage: loopctl {status|stats|skill-stats|mine-skills [--dry-run]|skill-curate|skill-snapshot|skill-rollback <ref>|doctor|enable|disable|mode dry-run|active|review-now|snapshot|rollback <ref>|mem-log|mem-diff|install-schedule|uninstall-schedule|token}";;
 esac
