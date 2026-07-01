@@ -1,19 +1,19 @@
-# hermes-infra
+# claude-loop
 
 A **self-improving memory + skills loop for Claude Code**, native to the harness (no API keys — it rides your Claude subscription). It reviews your sessions, distills durable **memories** and reusable **skills**, validates them through a deterministic gatekeeper, and maintains the library over time — so Claude stops re-learning the same things.
 
 ## Quick start
 
 ```sh
-git clone <this-repo> ~/git/hermes-infra && cd ~/git/hermes-infra
-./hermes install                 # copy machinery, merge hooks, create runtime dirs
+git clone <this-repo> ~/git/claude-loop && cd ~/git/claude-loop
+./claude-loop install                 # copy machinery, merge hooks, create runtime dirs
 ~/.claude/loop/bin/loopctl token            # optional: token for unattended cron
 ~/.claude/loop/bin/loopctl install-schedule # daily harvest + gardener (launchd, catches up after sleep)
 ~/.claude/loop/bin/loopctl enable           # start the per-session reviewer (stays dry-run)
 ~/.claude/loop/bin/loopctl mode active      # when you trust it: memories auto-write
 ```
 
-Nothing is enabled silently. `./hermes install --link` symlinks the machinery instead of copying (edits in this repo go live — best for development).
+Nothing is enabled silently. `./claude-loop install --link` symlinks the machinery instead of copying (edits in this repo go live — best for development).
 
 ## How it works
 
@@ -31,10 +31,10 @@ trigger → reviewer → proposal.json → gatekeeper → store → (recall) →
 ## Commands
 
 ```
-./hermes install [--link]    place machinery, merge hooks, create dirs
-./hermes update              git pull + re-apply (idempotent)
-./hermes uninstall [--purge] remove machinery + hooks + schedule (keeps your data unless --purge)
-./hermes status              install state + health check
+./claude-loop install [--link]    place machinery, merge hooks, create dirs
+./claude-loop update              git pull + re-apply (idempotent)
+./claude-loop uninstall [--purge] remove machinery + hooks + schedule (keeps your data unless --purge)
+./claude-loop status              install state + health check
 
 loopctl status | stats | doctor      observe
 loopctl enable | disable | mode …     control

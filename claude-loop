@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# hermes — install & maintain the self-improving loop from this repo.
+# claude-loop — install & maintain the self-improving loop from this repo.
 #
-#   ./hermes install [--link]    place machinery, merge hooks, create runtime dirs
-#                                  (default copies; --link symlinks for live dev)
-#   ./hermes update              git pull + re-apply (idempotent)
-#   ./hermes uninstall [--purge] remove machinery + hooks + schedule (keeps your data unless --purge)
-#   ./hermes status              show install state + loopctl doctor
+#   ./claude-loop install [--link]    place machinery, merge hooks, create runtime dirs
+#                                       (default copies; --link symlinks for live dev)
+#   ./claude-loop update              git pull + re-apply (idempotent)
+#   ./claude-loop uninstall [--purge] remove machinery + hooks + schedule (keeps your data unless --purge)
+#   ./claude-loop status              show install state + loopctl doctor
 #
 # Honors CLAUDE_CONFIG_DIR (default ~/.claude). Never touches .zshrc, never copies .env,
 # never enables anything silently — it prints the next steps for you to run.
@@ -110,5 +110,5 @@ case "$cmd" in
     [ -d "$REPO/.git" ] && echo "version: $(cd "$REPO" && git rev-parse --short HEAD 2>/dev/null) ($(cd "$REPO" && git rev-list --count HEAD 2>/dev/null) commits)"
     [ -e "$LOOP/bin/loopctl" ] && { echo "---"; bash "$LOOP/bin/loopctl" doctor 2>/dev/null; }
     ;;
-  *) echo "usage: ./hermes {install [--link] | update | uninstall [--purge] | status}"; exit 1;;
+  *) echo "usage: ./claude-loop {install [--link] | update | uninstall [--purge] | status}"; exit 1;;
 esac
