@@ -9,7 +9,7 @@ cat > /dev/null 2>&1                                     # drain stdin
 [ "${CLAUDE_CODE_CHILD_SESSION:-0}" = "1" ] && exit 0   # not in reviewer/child sessions
 [ -n "${LOOP_REVIEWER:-}" ] && exit 0
 
-maybe_garden_catchup async   # fresh-launch self-heal; the Stop hook covers already-open sessions
+maybe_selfheal_async   # fresh-launch self-heal (garden+miner); the Stop hook covers already-open sessions
 
 nl=$'\n'; body=""
 clean() { grep -v 'MEMORY.md' | sed 's#.*/##; s/\.md$//' | paste -sd, - | sed 's/,/, /g'; }

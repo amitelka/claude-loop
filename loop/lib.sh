@@ -60,16 +60,17 @@ release_store_lock() {  # release ONLY if we can PROVE we own it (owner present 
   return 0
 }
 
-# ── Garden self-heal (catch-up) ──────────────────────────────────────────────────────────────
-# Same-day recovery when the daily gardener was MISSED (laptop asleep past 03:00) or its run FAILED
-# (transient API error). Fires from harvest (nightly, sync) AND from the Stop/SessionStart hooks
-# (async, the moment you're active at the machine) — decoupling recovery from launchd's once-a-day
-# wake-fire, which is the case a stale-only trigger misses (harvest already ran, garden failed later,
-# laptop stays awake). garden.catchup doubles as the cooldown marker.
+# ── Self-heal: garden + miner catch-up ─────────────────────────────────────────────────────────
+# Same-day recovery when a scheduled run was MISSED (laptop asleep past its slot) or FAILED (transient
+# API error), decoupled from launchd's once-a-day wake-fire (the case a stale-only trigger misses:
+# harvest already ran, the run failed later, laptop stays awake). Both fire from harvest (nightly) AND
+# — because sessions are usually left open, so SessionStart rarely re-fires — from the Stop hook, via
+# ONE ordered detached worker (garden first, so a miner retry can't win the store.lock and starve the
+# gardener). The *.catchup markers double as 2h cooldowns; store.lock is the hard overlap backstop.
 
-# Pure decision. Echoes a reason ("stale" | "previous-fail" | "stale+previous-fail") and returns 0
-# when a catch-up is DUE, else returns 1 with no output. Due = (no confirmed success in >24h OR the
-# last run failed) AND >2h since the last attempt.
+# Garden due? Echoes a reason ("stale" | "previous-fail" | "stale+previous-fail") and returns 0 when a
+# catch-up is DUE, else 1 with no output. Due = (no confirmed success in >24h OR the last run failed)
+# AND >2h since the last attempt.
 garden_catchup_due() {
   local now gok gtry stale=0 gfailed=0 reason=""
   now="$(date +%s)"
@@ -83,23 +84,50 @@ garden_catchup_due() {
   printf '%s' "$reason"; return 0
 }
 
-# Decide + run. $1 = sync (default; blocks — harvest) | async (detach — hooks). Stamps the 2h cooldown
-# BEFORE launching so many session-turns can't each spawn a garden; store.lock is the hard backstop
-# against overlap either way. Tradeoff: if the launch itself fails on a trivial bug, retries are
-# suppressed for 2h — acceptable (prevents storms; the failure shows in the log + loopctl doctor).
+# Miner due? Independent of the garden — this is "the last automated mine attempt itself crashed,
+# retry it" (the garden→miner "corpus changed, re-mine" path lives in garden-then-mine.sh). Due =
+# miner enabled AND its last scheduled/catch-up run FAILED (skill-miner.fail) AND >2h since last try.
+miner_catchup_due() {
+  local now mtry
+  [ "${SKILL_MINER_ENABLED:-0}" = 1 ] || return 1
+  [ -f "$STATE_DIR/skill-miner.fail" ] || return 1
+  now="$(date +%s)"; mtry="$(cat "$STATE_DIR/skill-miner.catchup" 2>/dev/null || echo 0)"
+  [ "$((now - mtry))" -gt 7200 ] || return 1
+  return 0
+}
+
+# Run the garden catch-up if due (synchronous: garden, then sequenced miner, via garden-then-mine.sh).
+# Stamps the cooldown BEFORE launching so overlapping turns can't each spawn one. Tradeoff: a launch
+# that fails on a trivial bug suppresses retries for 2h — acceptable (prevents storms; shows in doctor).
 maybe_garden_catchup() {
-  local mode="${1:-sync}" reason
+  local reason
   [ "${LOOP_ENABLED:-0}" = "1" ] || return 1
   reason="$(garden_catchup_due)" || return 1
   mkdir -p "$STATE_DIR" 2>/dev/null                # else the stamp below fails on a fresh config → no cooldown → spawn storm
   date +%s > "$STATE_DIR/garden.catchup"           # cooldown starts at DECISION, not completion
-  if [ "$mode" = async ]; then
-    log "garden catch-up ($reason) — spawning detached"
-    nohup bash "$LOOP_DIR/bin/garden-then-mine.sh" "$reason" >> "$LOG" 2>&1 < /dev/null & disown
-    return 0
-  fi
   log "garden catch-up ($reason) — running"
   bash "$LOOP_DIR/bin/garden-then-mine.sh" "$reason"
+}
+
+# Run the miner-fail retry if due (synchronous). --catch-up bypasses the cadence floor but still honors
+# skip-if-unchanged / rejected-dedup / store.lock — NOT blunt --force.
+maybe_miner_catchup() {
+  [ "${LOOP_ENABLED:-0}" = "1" ] || return 1
+  miner_catchup_due || return 1
+  mkdir -p "$STATE_DIR" 2>/dev/null
+  date +%s > "$STATE_DIR/skill-miner.catchup"      # cooldown starts at DECISION, not completion
+  log "miner catch-up (previous-fail) — running"
+  bash "$LOOP_DIR/bin/mine-skills.sh" --catch-up
+}
+
+# Presence-triggered self-heal for the Stop/SessionStart hooks. If EITHER catch-up is due, detach ONE
+# worker that runs them in priority order (garden first). Spawns nothing when idle — a near-instant
+# no-op on almost every turn (just the two due-checks, no fork).
+maybe_selfheal_async() {
+  [ "${LOOP_ENABLED:-0}" = "1" ] || return 1
+  { garden_catchup_due >/dev/null 2>&1 || miner_catchup_due; } || return 1
+  log "self-heal — spawning detached worker"
+  nohup bash "$LOOP_DIR/bin/selfheal.sh" >> "$LOG" 2>&1 < /dev/null & disown
 }
 
 # Fingerprint of the dirs the reviewer must NOT touch (memory-global + pending + installed skills).

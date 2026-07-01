@@ -25,9 +25,9 @@ find "$proj_root" -name '*.jsonl' -type f -mtime -2 -not -path '*/subagents/*' -
   fi
 done
 
-# Garden catch-up (self-heal): same-day recovery when the gardener was missed (laptop asleep past
-# 03:00) or its last run FAILED. Decision + 2h cooldown + garden→miner sequencing all live in lib.sh
-# (garden_catchup_due / maybe_garden_catchup) so the Stop/SessionStart hooks fire the identical path
-# the moment you're active at the machine — not only during this nightly pass. Synchronous here.
-maybe_garden_catchup sync
+# Self-heal (same-day recovery): re-run a missed/failed gardener, then retry a crashed miner. Both
+# also fire from the Stop hook the moment you're active (sessions stay open, so SessionStart rarely
+# re-fires); the shared maybe_*_catchup live in lib.sh. Garden before miner so they don't race the lock.
+maybe_garden_catchup
+maybe_miner_catchup
 log "harvest: nightly pass complete"

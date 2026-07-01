@@ -97,7 +97,7 @@ PLIST
     mreal=$(grep 'mine-skills: done' "$l" 2>/dev/null | grep -c 'dry=0'); mdry=$(grep 'mine-skills: done' "$l" 2>/dev/null | grep -c 'dry=1')
     msupe=$(grep -oE 'suppressed=\[[^]]*\]' "$l" 2>/dev/null | sed -E 's/suppressed=\[//; s/\]//' | tr ',' '\n' | grep -c '[^[:space:]]')
     echo "miner   : last=$(printf '%s' "$ml" | cut -c1-19 | sed 's/^$/never/') \"$(printf '%s' "$ml" | sed -E 's/^[^ ]+ mine-skills: //' | cut -c1-44)\""
-    echo "          runs=$((mreal+mdry)) real=$mreal dry=$mdry fails=$(grep -c 'mine-skills: FAILED' "$l" 2>/dev/null)  rejection-denylist=$rdl suppressed-events=$msupe  last-success=${mok:-never}"
+    echo "          runs=$((mreal+mdry)) real=$mreal dry=$mdry fails=$(grep -c 'mine-skills: FAILED' "$l" 2>/dev/null)  rejection-denylist=$rdl suppressed-events=$msupe  last-success=${mok:-never}  pending-fail=$([ -f "$STATE_DIR/skill-miner.fail" ] && echo yes || echo no)"
     ;;
   skill-stats)
     f="$STATE_DIR/skill-uses.jsonl"; [ -s "$f" ] || { echo "no skill usage logged yet ($f)"; exit 0; }
@@ -162,8 +162,10 @@ PLIST
     gfr=""; [ -f "$STATE_DIR/garden.fail" ] && gfr="; last fail: $(cut -d'|' -f2 "$STATE_DIR/garden.fail")"
     if [ "${gok:-0}" = 0 ]; then wrn "no successful garden recorded yet$gfr"
     elif [ "$((now - gok))" -gt 172800 ]; then wrn "last successful garden >48h ago ($(date -r "$gok" '+%F %H:%M')$gfr)"
-    elif [ -f "$STATE_DIR/garden.fail" ]; then wrn "last garden RUN failed ($(cut -d'|' -f2 "$STATE_DIR/garden.fail")) — last success $(date -r "$gok" '+%F %H:%M'); retry pending next harvest"
+    elif [ -f "$STATE_DIR/garden.fail" ]; then wrn "last garden RUN failed ($(cut -d'|' -f2 "$STATE_DIR/garden.fail")) — last success $(date -r "$gok" '+%F %H:%M'); retry pending (Stop hook / next harvest)"
     else okx "last garden ok: $(date -r "$gok" '+%F %H:%M')"; fi
+    if [ -f "$STATE_DIR/skill-miner.fail" ]; then wrn "last miner RUN failed ($(cut -d'|' -f2 "$STATE_DIR/skill-miner.fail")) — retry pending (Stop hook / next harvest)"
+    elif [ "${SKILL_MINER_ENABLED:-0}" = 1 ]; then okx "miner: no pending failure"; fi
     si=$(find -L "$SKILLS_DIR" -mindepth 2 -maxdepth 2 -name SKILL.md 2>/dev/null | wc -l | tr -d ' ')
     nm=$(find -L "$SKILLS_DIR" -mindepth 2 -maxdepth 2 -name SKILL.md -exec grep -L '^## Triggers' {} + 2>/dev/null | wc -l | tr -d ' ')
     sp=$(pending_skill_count); su=0; [ -f "$STATE_DIR/skill-uses.jsonl" ] && su=$(wc -l < "$STATE_DIR/skill-uses.jsonl" | tr -d ' ')

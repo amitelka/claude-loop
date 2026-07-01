@@ -6,6 +6,9 @@ set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || exit 1
 export LOOP_REVIEWER=1
 dry=0; force=0; sched=0; catchup=0; for a in "$@"; do case "$a" in --dry-run) dry=1;; --force) force=1;; --scheduled) sched=1;; --catch-up) catchup=1;; esac; done
+# Only the AUTOMATED path (scheduled/catch-up, real) owns skill-miner.fail — the marker that drives the
+# self-heal retry. Manual and --dry-run runs leave it untouched (out-of-band, user is watching).
+own_fail=0; { [ "$sched" = 1 ] || [ "$catchup" = 1 ]; } && [ "$dry" = 0 ] && own_fail=1
 # --catch-up = self-heal mode (harvest, after a confirmed garden): bypasses the cadence floor (the corpus
 # just changed) but still honors enabled / skip-if-unchanged / rejected-dedup / store.lock — NOT blunt --force.
 { [ "$sched" = 1 ] || [ "$catchup" = 1 ]; } && [ "${SKILL_MINER_ENABLED:-0}" != 1 ] && { log "mine-skills: unattended run but SKILL_MINER_ENABLED=0 — skip"; exit 0; }
@@ -55,7 +58,9 @@ rc=$?
 is_err="$(printf '%s' "$raw" | jq -r 'if type=="array" then (map(select(.type=="result"))|last|.is_error) else (.is_error // false) end' 2>/dev/null)"
 cost="$(printf '%s' "$raw" | jq -r 'if type=="array" then (map(select(.type=="result"))|last|.total_cost_usd) else empty end' 2>/dev/null)"
 if [ "$rc" -ne 0 ] || [ "$is_err" = "true" ] || ! { [ -f "$proposal" ] && jq -e . "$proposal" >/dev/null 2>&1; }; then
-  log "mine-skills: FAILED (rc=$rc err=$is_err) — no valid proposal"; echo "mine-skills: failed (see $LOG)"; exit 1
+  log "mine-skills: FAILED (rc=$rc err=$is_err) — no valid proposal"; echo "mine-skills: failed (see $LOG)"
+  [ "$own_fail" = 1 ] && printf '%s|rc=%s,err=%s\n' "$(date +%s)" "$rc" "$is_err" > "$STATE_DIR/skill-miner.fail"   # arm the self-heal retry
+  exit 1
 fi
 if [ "$guard_before" != "$(loop_manifest)" ]; then
   log "mine-skills: ANOMALY — miner touched memory-global/pending/skills directly; aborting (nothing staged)"
@@ -118,5 +123,6 @@ log "mine-skills: done candidates=$n staged=$staged rejected=$rej suppressed=[$s
 [ -n "$supp" ] && echo "mine-skills: suppressed previously-rejected: $supp (see loopctl skill-rejections)"
 [ "$dry" = 0 ] && jq -n --arg fp "$fp" --argjson at "$(date +%s)" --arg p "$proposal" \
   '{last_fingerprint:$fp, last_success_at:$at, last_proposal_path:$p}' > "$STATE_FILE"
+[ "$own_fail" = 1 ] && rm -f "$STATE_DIR/skill-miner.fail"   # healthy automated mine (incl. 0 candidates) → clear the retry marker
 [ "$dry" = 1 ] && echo "(dry-run — re-run without --dry-run to stage, then triage with /review-skills)"
 exit 0

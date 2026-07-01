@@ -11,9 +11,10 @@ input="$(cat 2>/dev/null)"                              # always drain stdin fir
 [ "${LOOP_ENABLED:-0}" = "1" ] || exit 0
 
 # Self-heal: a turn just completed → you're active at the machine. Recover a missed/failed gardener
-# now rather than waiting for the next nightly run (you leave sessions open, so SessionStart won't
-# re-fire). Detached + cooldown-gated (≤1/2h), so it's a near-instant no-op on almost every turn.
-maybe_garden_catchup async
+# OR a crashed miner run now, rather than waiting for the next nightly pass (you leave sessions open,
+# so SessionStart won't re-fire). Spawns ONE ordered detached worker only when something's due —
+# cooldown-gated (≤1/2h each), a near-instant no-op on almost every turn.
+maybe_selfheal_async
 
 transcript="$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)"
 session="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)"
