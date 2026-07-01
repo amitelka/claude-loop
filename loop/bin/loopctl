@@ -162,6 +162,7 @@ PLIST
     gfr=""; [ -f "$STATE_DIR/garden.fail" ] && gfr="; last fail: $(cut -d'|' -f2 "$STATE_DIR/garden.fail")"
     if [ "${gok:-0}" = 0 ]; then wrn "no successful garden recorded yet$gfr"
     elif [ "$((now - gok))" -gt 172800 ]; then wrn "last successful garden >48h ago ($(date -r "$gok" '+%F %H:%M')$gfr)"
+    elif [ -f "$STATE_DIR/garden.fail" ]; then wrn "last garden RUN failed ($(cut -d'|' -f2 "$STATE_DIR/garden.fail")) — last success $(date -r "$gok" '+%F %H:%M'); retry pending next harvest"
     else okx "last garden ok: $(date -r "$gok" '+%F %H:%M')"; fi
     si=$(find -L "$SKILLS_DIR" -mindepth 2 -maxdepth 2 -name SKILL.md 2>/dev/null | wc -l | tr -d ' ')
     nm=$(find -L "$SKILLS_DIR" -mindepth 2 -maxdepth 2 -name SKILL.md -exec grep -L '^## Triggers' {} + 2>/dev/null | wc -l | tr -d ' ')

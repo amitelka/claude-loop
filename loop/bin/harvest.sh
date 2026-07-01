@@ -25,15 +25,20 @@ find "$proj_root" -name '*.jsonl' -type f -mtime -2 -not -path '*/subagents/*' -
   fi
 done
 
-# Garden catch-up (self-heal, mirrors the reviewer): if the gardener hasn't confirmed success in
-# >24h, run it now — we're awake and just exercised the API on the reviews above. Cooldown: at most
-# once / 6h so repeated manual harvests don't spawn back-to-back gardens.
+# Garden catch-up (self-heal): re-run the gardener if EITHER it's STALE (no confirmed success in >24h —
+# e.g. missed while the laptop slept past 3am) OR the last run FAILED (garden.fail present — e.g. a
+# transient API error). The garden's own daily agent only retries NEXT day; the fail-trigger here gives
+# SAME-day recovery on the next wake/harvest. Cooldown (reused garden.catchup marker): at most once / 2h,
+# so a persistent outage doesn't spawn back-to-back gardens.
 now="$(date +%s)"
 gok="$(cat "$STATE_DIR/garden.success" 2>/dev/null || echo 0)"
 gtry="$(cat "$STATE_DIR/garden.catchup" 2>/dev/null || echo 0)"
-if [ "$((now - gok))" -gt 86400 ] && [ "$((now - gtry))" -gt 21600 ]; then
+stale=0;   [ "$((now - gok))" -gt 86400 ] && stale=1
+gfailed=0; [ -f "$STATE_DIR/garden.fail" ] && gfailed=1
+if { [ "$stale" = 1 ] || [ "$gfailed" = 1 ]; } && [ "$((now - gtry))" -gt 7200 ]; then
   echo "$now" > "$STATE_DIR/garden.catchup"
-  log "harvest: garden stale (last ok $(date -r "$gok" '+%F %H:%M' 2>/dev/null || echo never)) — running catch-up"
+  reason=""; [ "$stale" = 1 ] && reason="stale"; [ "$gfailed" = 1 ] && reason="${reason:+$reason+}previous-fail"
+  log "harvest: garden catch-up ($reason; last ok $(date -r "$gok" '+%F %H:%M' 2>/dev/null || echo never)) — running"
   bash "$LOOP_DIR/bin/garden.sh" --catch-up
   # Miner catch-up — sequenced after garden, but ONLY if the garden actually SUCCEEDED. garden.sh exits 0
   # even on failure/skip, so trust the state marker, not the exit code: run the miner iff garden.success
