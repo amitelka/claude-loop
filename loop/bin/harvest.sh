@@ -25,30 +25,9 @@ find "$proj_root" -name '*.jsonl' -type f -mtime -2 -not -path '*/subagents/*' -
   fi
 done
 
-# Garden catch-up (self-heal): re-run the gardener if EITHER it's STALE (no confirmed success in >24h —
-# e.g. missed while the laptop slept past 3am) OR the last run FAILED (garden.fail present — e.g. a
-# transient API error). The garden's own daily agent only retries NEXT day; the fail-trigger here gives
-# SAME-day recovery on the next wake/harvest. Cooldown (reused garden.catchup marker): at most once / 2h,
-# so a persistent outage doesn't spawn back-to-back gardens.
-now="$(date +%s)"
-gok="$(cat "$STATE_DIR/garden.success" 2>/dev/null || echo 0)"
-gtry="$(cat "$STATE_DIR/garden.catchup" 2>/dev/null || echo 0)"
-stale=0;   [ "$((now - gok))" -gt 86400 ] && stale=1
-gfailed=0; [ -f "$STATE_DIR/garden.fail" ] && gfailed=1
-if { [ "$stale" = 1 ] || [ "$gfailed" = 1 ]; } && [ "$((now - gtry))" -gt 7200 ]; then
-  echo "$now" > "$STATE_DIR/garden.catchup"
-  reason=""; [ "$stale" = 1 ] && reason="stale"; [ "$gfailed" = 1 ] && reason="${reason:+$reason+}previous-fail"
-  log "harvest: garden catch-up ($reason; last ok $(date -r "$gok" '+%F %H:%M' 2>/dev/null || echo never)) — running"
-  bash "$LOOP_DIR/bin/garden.sh" --catch-up
-  # Miner catch-up — sequenced after garden, but ONLY if the garden actually SUCCEEDED. garden.sh exits 0
-  # even on failure/skip, so trust the state marker, not the exit code: run the miner iff garden.success
-  # advanced. --catch-up bypasses the cadence floor (the corpus just changed) but still honors enabled /
-  # skip-if-unchanged / rejected-dedup / store.lock. garden.sh is synchronous and releases store.lock
-  # before returning, so the two never overlap.
-  gok2="$(cat "$STATE_DIR/garden.success" 2>/dev/null || echo 0)"
-  if [ "$gok2" -gt "$gok" ] && [ "${SKILL_MINER_ENABLED:-0}" = 1 ]; then
-    log "harvest: miner catch-up (sequenced after confirmed garden success)"
-    bash "$LOOP_DIR/bin/mine-skills.sh" --catch-up
-  fi
-fi
+# Garden catch-up (self-heal): same-day recovery when the gardener was missed (laptop asleep past
+# 03:00) or its last run FAILED. Decision + 2h cooldown + garden→miner sequencing all live in lib.sh
+# (garden_catchup_due / maybe_garden_catchup) so the Stop/SessionStart hooks fire the identical path
+# the moment you're active at the machine — not only during this nightly pass. Synchronous here.
+maybe_garden_catchup sync
 log "harvest: nightly pass complete"

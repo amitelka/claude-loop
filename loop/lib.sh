@@ -60,6 +60,47 @@ release_store_lock() {  # release ONLY if we can PROVE we own it (owner present 
   return 0
 }
 
+# ── Garden self-heal (catch-up) ──────────────────────────────────────────────────────────────
+# Same-day recovery when the daily gardener was MISSED (laptop asleep past 03:00) or its run FAILED
+# (transient API error). Fires from harvest (nightly, sync) AND from the Stop/SessionStart hooks
+# (async, the moment you're active at the machine) — decoupling recovery from launchd's once-a-day
+# wake-fire, which is the case a stale-only trigger misses (harvest already ran, garden failed later,
+# laptop stays awake). garden.catchup doubles as the cooldown marker.
+
+# Pure decision. Echoes a reason ("stale" | "previous-fail" | "stale+previous-fail") and returns 0
+# when a catch-up is DUE, else returns 1 with no output. Due = (no confirmed success in >24h OR the
+# last run failed) AND >2h since the last attempt.
+garden_catchup_due() {
+  local now gok gtry stale=0 gfailed=0 reason=""
+  now="$(date +%s)"
+  gok="$(cat "$STATE_DIR/garden.success" 2>/dev/null || echo 0)"
+  gtry="$(cat "$STATE_DIR/garden.catchup" 2>/dev/null || echo 0)"
+  [ "$((now - gok))" -gt 86400 ] && stale=1
+  [ -f "$STATE_DIR/garden.fail" ] && gfailed=1
+  { [ "$stale" = 1 ] || [ "$gfailed" = 1 ]; } && [ "$((now - gtry))" -gt 7200 ] || return 1
+  [ "$stale" = 1 ] && reason="stale"
+  [ "$gfailed" = 1 ] && reason="${reason:+$reason+}previous-fail"
+  printf '%s' "$reason"; return 0
+}
+
+# Decide + run. $1 = sync (default; blocks — harvest) | async (detach — hooks). Stamps the 2h cooldown
+# BEFORE launching so many session-turns can't each spawn a garden; store.lock is the hard backstop
+# against overlap either way. Tradeoff: if the launch itself fails on a trivial bug, retries are
+# suppressed for 2h — acceptable (prevents storms; the failure shows in the log + loopctl doctor).
+maybe_garden_catchup() {
+  local mode="${1:-sync}" reason
+  [ "${LOOP_ENABLED:-0}" = "1" ] || return 1
+  reason="$(garden_catchup_due)" || return 1
+  date +%s > "$STATE_DIR/garden.catchup"          # cooldown starts at DECISION, not completion
+  if [ "$mode" = async ]; then
+    log "garden catch-up ($reason) — spawning detached"
+    nohup bash "$LOOP_DIR/bin/garden-then-mine.sh" "$reason" >> "$LOG" 2>&1 < /dev/null & disown
+    return 0
+  fi
+  log "garden catch-up ($reason) — running"
+  bash "$LOOP_DIR/bin/garden-then-mine.sh" "$reason"
+}
+
 # Fingerprint of the dirs the reviewer must NOT touch (memory-global + pending + installed skills).
 # review.sh asserts this is unchanged across the reviewer run — it may write only its proposal artifact.
 loop_manifest() {
