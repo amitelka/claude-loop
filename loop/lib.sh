@@ -124,8 +124,19 @@ maybe_miner_catchup() {
 # worker that runs them in priority order (garden first). Spawns nothing when idle — a near-instant
 # no-op on almost every turn (just the two due-checks, no fork).
 maybe_selfheal_async() {
+  local gate="$STATE_DIR/selfheal.lock" now age
   [ "${LOOP_ENABLED:-0}" = "1" ] || return 1
   { garden_catchup_due >/dev/null 2>&1 || miner_catchup_due; } || return 1
+  # Atomic single-worker gate (separate from the garden/miner cooldowns, which the worker only stamps
+  # after it starts): stops multiple concurrent Stop/SessionStart hooks — e.g. several open sessions —
+  # from each forking a worker in the window before the first stamps its cooldowns. The worker clears
+  # this on EXIT; a crashed worker's gate is stolen after 30m (doctor's ownerless-*.lock sweep reaps it too).
+  mkdir -p "$STATE_DIR" 2>/dev/null
+  if ! mkdir "$gate" 2>/dev/null; then
+    now="$(date +%s)"; age=$(( now - $(stat -f %m "$gate" 2>/dev/null || echo "$now") ))
+    [ "$age" -gt 1800 ] || return 1                                     # a fresh worker is in flight → don't double-spawn
+    rm -rf "$gate" 2>/dev/null; mkdir "$gate" 2>/dev/null || return 1   # steal a stale gate (crashed worker)
+  fi
   log "self-heal — spawning detached worker"
   nohup bash "$LOOP_DIR/bin/selfheal.sh" >> "$LOG" 2>&1 < /dev/null & disown
 }
