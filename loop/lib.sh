@@ -91,7 +91,8 @@ maybe_garden_catchup() {
   local mode="${1:-sync}" reason
   [ "${LOOP_ENABLED:-0}" = "1" ] || return 1
   reason="$(garden_catchup_due)" || return 1
-  date +%s > "$STATE_DIR/garden.catchup"          # cooldown starts at DECISION, not completion
+  mkdir -p "$STATE_DIR" 2>/dev/null                # else the stamp below fails on a fresh config → no cooldown → spawn storm
+  date +%s > "$STATE_DIR/garden.catchup"           # cooldown starts at DECISION, not completion
   if [ "$mode" = async ]; then
     log "garden catch-up ($reason) — spawning detached"
     nohup bash "$LOOP_DIR/bin/garden-then-mine.sh" "$reason" >> "$LOG" 2>&1 < /dev/null & disown
