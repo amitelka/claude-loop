@@ -112,7 +112,7 @@ PLIST
     ' "$f" 2>/dev/null || echo "  (parse error)"
     ;;
   mine-skills) bash "$LOOP_DIR/bin/mine-skills.sh" "$@";;
-  skill-snapshot) skill_snapshot "manual"; echo "skills snapshot committed ($SKILLS_DIR)";;
+  skill-snapshot) skill_snapshot "${1:-manual}"; echo "skills snapshot committed ($SKILLS_DIR)";;
   skill-rollback)
     ref="${1:-}"; [ -n "$ref" ] || { echo "usage: loopctl skill-rollback <commit>   (see: git -C \"$SKILLS_DIR\" log --oneline)"; exit 1; }
     skill_snapshot "pre-rollback"

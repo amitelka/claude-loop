@@ -14,10 +14,10 @@ The self-improving loop stages candidate skills in `~/.claude/loop/pending/skill
 2. For each pending dir, Read `WHY.md` and **either** `SKILL.md` (new skill) **or** `PATCH.md` (a patch — also Read the *installed* skill it targets, `~/.claude/skills/<name>/SKILL.md`, to judge the change in context). Present concisely: the name, new-skill-vs-patch, what it does / what the patch changes, the `repo` tag from `WHY.md`, and the source session + rationale.
 3. Give your own quick read: is it genuinely reusable and correct, or thin/duplicative? Check it doesn't duplicate an existing skill (`ls ~/.claude/skills`).
 4. Ask the user to approve or reject each (offer to batch).
-5. On **approve**:
-   - **new skill** (`SKILL.md`): `mv` the proposal dir to `~/.claude/skills/<name>/` (always global — any `repo` tag in `WHY.md` is advisory, never a separate location).
-   - **patch** (`PATCH.md`): run `bash ~/.claude/loop/bin/loopctl skill-snapshot` first (so it's revertable via `loopctl skill-rollback`), then apply the change in `PATCH.md` to `~/.claude/skills/<name>/SKILL.md`, and remove the pending dir. If the target skill is a **symlink** (externally-managed — e.g. symlinked in from another repo), the edit lands in that repo — it's versioned there, not by `skill-rollback`.
-   - Either way, drop the now-redundant `WHY.md`.
+5. On **approve** — snapshot, apply, snapshot, so the change is a discrete revertable commit and never left in a dirty worktree:
+   - **new skill** (`SKILL.md`): drop the proposal's `WHY.md`, then `mv` the dir to `~/.claude/skills/<name>/` (always global — any `repo` tag in `WHY.md` is advisory, never a separate location).
+   - **patch** (`PATCH.md`): `bash ~/.claude/loop/bin/loopctl skill-snapshot "pre-approve <name>"` first (the rollback point), then apply the change in `PATCH.md` to `~/.claude/skills/<name>/SKILL.md`, and remove the pending dir (incl. its `WHY.md`). If the target skill is a **symlink** (externally-managed — e.g. symlinked in from another repo), the edit lands in that repo — versioned there, not by `skill-rollback`, so skip the snapshots.
+   - **Then, either way, commit the result:** `bash ~/.claude/loop/bin/loopctl skill-snapshot "post-approve <name>"` — so the installed/changed skill is its own commit (revert via `loopctl skill-rollback`), not a dirty tree swept into a later unrelated snapshot.
 6. On **reject**: first record it so the miner won't re-derive it next run — `bash ~/.claude/loop/bin/loopctl skill-reject <name> <action>` (`<action>` is `patch` if the dir has `PATCH.md`, else `new`). Then move the proposal dir to `~/.claude/loop/archive/rejected/<name>-<date>/`. Archiving alone does **not** prevent re-proposal — the miner re-derives skills from memory each run, so `skill-reject` is what suppresses it (undo later with `loopctl skill-unreject <name> <action>`).
 7. Summarize what was installed and what was archived.
 
