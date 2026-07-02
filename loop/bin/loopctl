@@ -178,14 +178,15 @@ PLIST
     [ "${sp:-0}" -gt 0 ] && wrn "$sp skill proposal(s) pending → /review-skills"
     echo "    (never-used / stale / archive candidates deferred until telemetry matures — detail: loopctl skill-curate)"
     ;;
-  codex-surface)   # surface memory-global into Codex: write/refresh a read-only memory-pointer AGENTS.md in each CODEX_HOMES dir
-    homes="${CODEX_HOMES:-}"
+  share-memory)   # share memory-global into peer-agent homes; adapter auto-detected per home (codex→AGENTS.md pointer; claude→native, skipped)
+    homes="${SHARE_MEMORY_HOMES:-}"
+    [ "$#" -gt 0 ] && homes="$(printf '%s:' "$@")"   # explicit `share-memory <home>...` args override the config (one-off)
     if [ -z "$homes" ]; then
-      if [ -d "$HOME/.codex" ]; then homes="$HOME/.codex"; echo "  CODEX_HOMES unset — defaulting to ~/.codex (set it in $local_cfg to change/add homes)"
-      else echo "CODEX_HOMES unset and no ~/.codex — set CODEX_HOMES (:-separated) in $local_cfg"; exit 0; fi
+      if [ -d "$HOME/.codex" ]; then homes="$HOME/.codex"; echo "  SHARE_MEMORY_HOMES unset — defaulting to ~/.codex (set it in $local_cfg to change/add homes)"
+      else echo "SHARE_MEMORY_HOMES unset and no ~/.codex — set it (:-separated) in $local_cfg"; exit 0; fi
     fi
     _ptr() { cat <<PTR
-<!-- claude-loop:memory-global BEGIN (managed by \`loopctl codex-surface\`; edit CODEX_HOMES in config.local.sh) -->
+<!-- claude-loop:memory-global BEGIN (managed by \`loopctl share-memory\`; edit SHARE_MEMORY_HOMES in config.local.sh) -->
 ## Durable memory (shared with Claude Code — read-only)
 At session start, Read \`$MEMORY_DIR/MEMORY.md\`: a one-line index of durable facts and preferences.
 Full memory bodies live in that same directory — Read the specific \`<slug>.md\` when a topic matches its
@@ -198,12 +199,18 @@ PTR
     for h in "${_hs[@]}"; do
       [ -n "$h" ] || continue
       h="${h/#\~/$HOME}"   # expand a leading ~ (tildes don't expand inside quoted config values)
-      mkdir -p "$h" 2>/dev/null || { echo "  skip $h (mkdir failed)"; continue; }
-      a="$h/AGENTS.md"; t="$(mktemp)"
-      [ -f "$a" ] && awk 'BEGIN{s=0} /claude-loop:memory-global BEGIN/{s=1} s==0{print} /claude-loop:memory-global END/{s=0}' "$a" > "$t"
-      { [ -s "$t" ] && { cat "$t"; echo; }; _ptr; } > "$a"
-      rm -f "$t"; echo "  surfaced memory-global pointer -> $a"
+      [ "$h" = "$CLAUDE_HOME" ] && { echo "  skip    $h (the loop's own home — memory-global lives here, nothing to share into)"; continue; }
+      if [ -f "$h/config.toml" ] && [ -f "$h/auth.json" ]; then   # codex adapter → managed AGENTS.md pointer block
+        a="$h/AGENTS.md"; t="$(mktemp)"
+        [ -f "$a" ] && awk 'BEGIN{s=0} /claude-loop:memory-global BEGIN/{s=1} s==0{print} /claude-loop:memory-global END/{s=0}' "$a" > "$t"
+        { [ -s "$t" ] && { cat "$t"; echo; }; _ptr; } > "$a"; rm -f "$t"
+        echo "  codex   -> $a"
+      elif [ -f "$h/settings.json" ]; then                       # claude adapter — stub: native auto-load already covers it
+        echo "  claude  -> $h (skipped: native auto-load already surfaces the index; adapter unneeded until a non-default CLAUDE_CONFIG_DIR home exists)"
+      else
+        echo "  unknown -> $h (no config.toml+auth.json [codex] or settings.json [claude]; skipped)"
+      fi
     done
     ;;
-  *) echo "usage: loopctl {status|stats|skill-stats|mine-skills [--dry-run]|skill-curate|skill-snapshot|skill-rollback <ref>|doctor|enable|disable|mode dry-run|active|review-now|snapshot|rollback <ref>|mem-log|mem-diff|codex-surface|install-schedule|uninstall-schedule|token}";;
+  *) echo "usage: loopctl {status|stats|skill-stats|mine-skills [--dry-run]|skill-curate|skill-snapshot|skill-rollback <ref>|doctor|enable|disable|mode dry-run|active|review-now|snapshot|rollback <ref>|mem-log|mem-diff|share-memory|install-schedule|uninstall-schedule|token}";;
 esac

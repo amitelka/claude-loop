@@ -31,8 +31,12 @@ MEMORY_INDEX_MAX_LINES=180
 MEASUREMENT_ENABLED=0     # 0 = measurement hooks no-op. Enable per machine in config.local.sh.
 MEASUREMENT_VERSION=1     # bump on any scorer/schema change so mid-window regimes don't mix in the logs
 
-# ── Cross-agent: surface memory-global into Codex (read-only; `loopctl codex-surface`) ──
-CODEX_HOMES=""            # :-separated Codex home dirs (use $HOME/…, not ~) for a memory-pointer AGENTS.md; "" = off (codex-surface then defaults to ~/.codex if present)
+# ── Cross-agent: share memory-global into peer-agent homes (read-only; `loopctl share-memory`) ──
+# :-separated peer home dirs (use $HOME/…, not ~). Adapter auto-detected per home: config.toml+auth.json
+# → codex (writes an AGENTS.md memory-pointer); settings.json → claude (skipped — native auto-load already
+# covers it); unknown → warned + skipped. The loop's own CLAUDE_HOME is never a target. "" = off; run bare
+# and it defaults to ~/.codex if present.
+SHARE_MEMORY_HOMES=""
 
 # ── Paths (honor CLAUDE_CONFIG_DIR so a temp install can be tested in isolation) ─
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
