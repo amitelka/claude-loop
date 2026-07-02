@@ -1,0 +1,18 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest   # has bash, jq, shellcheck preinstalled
+    steps:
+      - uses: actions/checkout@v4
+      - name: smoke tests
+        run: bash tests/run.sh
+      - name: shellcheck
+        # informational until the existing scripts are confirmed clean, then drop continue-on-error
+        # to make it blocking (the whole point of the log-tag contract is that drift should fail CI)
+        continue-on-error: true
+        run: shellcheck -S warning loop/bin/*.sh loop/hooks/*.sh loop/lib.sh loop/config.sh claude-loop tests/*.sh
