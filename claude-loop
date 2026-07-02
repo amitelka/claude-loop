@@ -40,6 +40,8 @@ merge_hooks(){
     | put("SessionEnd"; "on-session-end.sh")
     | putm("PostToolUse"; "on-skill-use.sh"; "Skill")
     | putm("UserPromptExpansion"; "on-skill-use.sh"; ".*")
+    | putm("PostToolUse"; "on-read.sh"; "Read")
+    | put("UserPromptSubmit"; "on-shadow.sh")
   ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS" || die "settings.json hook-merge failed"
 }
 
@@ -50,7 +52,7 @@ unmerge_hooks(){
     def rm($ev; $f):
       .hooks[$ev] = ((.hooks[$ev] // []) | map(select(((.hooks // []) | map(.command) | join(" ")) | contains($f) | not)))
       | if (.hooks[$ev] // [] | length) == 0 then del(.hooks[$ev]) else . end;
-    if .hooks then rm("Stop";"on-stop.sh") | rm("SessionStart";"on-session-start.sh") | rm("SessionEnd";"on-session-end.sh") | rm("PostToolUse";"on-skill-use.sh") | rm("UserPromptExpansion";"on-skill-use.sh") else . end
+    if .hooks then rm("Stop";"on-stop.sh") | rm("SessionStart";"on-session-start.sh") | rm("SessionEnd";"on-session-end.sh") | rm("PostToolUse";"on-skill-use.sh") | rm("PostToolUse";"on-read.sh") | rm("UserPromptExpansion";"on-skill-use.sh") | rm("UserPromptSubmit";"on-shadow.sh") else . end
   ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
 }
 
