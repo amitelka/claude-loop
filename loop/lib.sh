@@ -13,6 +13,18 @@ LOOP_LIB_DIR="$(cd "$(dirname "$_LOOP_SELF")" 2>/dev/null && pwd)"
 ts()  { date '+%Y-%m-%dT%H:%M:%S%z'; }
 log() { printf '%s %s\n' "$(ts)" "$*" >> "$LOG" 2>/dev/null; }
 
+# ── Passive measurement (observation window B): log-only telemetry, gated + loop-session-filtered ──
+# measure_on: should this event be recorded? Off unless MEASUREMENT_ENABLED and LOOP_ENABLED, and NEVER
+# for the loop's own `claude -p` sessions — the gardener/reviewer/miner read every memory, which would
+# swamp read-counts (the loop talking to itself). Reuses the existing child-session markers.
+measure_on() {
+  [ "${MEASUREMENT_ENABLED:-0}" = 1 ] && [ "${LOOP_ENABLED:-0}" = 1 ] || return 1
+  [ "${CLAUDE_CODE_CHILD_SESSION:-0}" = 1 ] && return 1
+  [ -n "${LOOP_REVIEWER:-}" ] && return 1
+  return 0
+}
+measure_append() { mkdir -p "$MEASURE_DIR" 2>/dev/null; printf '%s\n' "$2" >> "$MEASURE_DIR/$1.jsonl" 2>/dev/null; }  # $1=stream, $2=prebuilt json line
+
 # Counts over a RAW JSONL slice on stdin.
 count_tools() { jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use") | .id' 2>/dev/null | wc -l | tr -d ' '; }
 count_turns() { jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="text")    | "x"' 2>/dev/null | wc -l | tr -d ' '; }

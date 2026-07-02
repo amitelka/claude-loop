@@ -27,6 +27,10 @@ SKILL_MINER_ONLY_IF_CHANGED=1  # scheduled runs skip when inputs unchanged since
 # ── Bounds ────────────────────────────────────────────────────────────────────
 MEMORY_INDEX_MAX_LINES=180
 
+# ── Passive measurement (observation window B; log-only, never changes what Claude sees) ──
+MEASUREMENT_ENABLED=0     # 0 = measurement hooks no-op. Enable per machine in config.local.sh.
+MEASUREMENT_VERSION=1     # bump on any scorer/schema change so mid-window regimes don't mix in the logs
+
 # ── Paths (honor CLAUDE_CONFIG_DIR so a temp install can be tested in isolation) ─
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 LOOP_DIR="$CLAUDE_HOME/loop"
@@ -35,6 +39,7 @@ SKILLS_DIR="$CLAUDE_HOME/skills"
 PENDING_SKILLS="$LOOP_DIR/pending/skills"
 PENDING_MEM="$LOOP_DIR/pending/memories"
 STATE_DIR="$LOOP_DIR/state"
+MEASURE_DIR="$STATE_DIR/measure"   # passive-measurement jsonl streams (gitignored via loop/state/)
 ARCHIVE_DIR="$LOOP_DIR/archive"
 LOG="$LOOP_DIR/log/loop.log"
 ENV_FILE="$LOOP_DIR/.env"
