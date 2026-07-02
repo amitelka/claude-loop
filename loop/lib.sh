@@ -15,11 +15,11 @@ log() { printf '%s %s\n' "$(ts)" "$*" >> "$LOG" 2>/dev/null; }
 
 # ── Passive measurement (observation window B): log-only telemetry, gated + loop-session-filtered ──
 # measure_on: should this event be recorded? Off unless MEASUREMENT_ENABLED and LOOP_ENABLED, and NEVER
-# for the loop's own `claude -p` sessions — the gardener/reviewer/miner read every memory, which would
-# swamp read-counts (the loop talking to itself). Reuses the existing child-session markers.
+# for the loop's own `claude -p` (gardener/reviewer/miner + loop-adjacent harnesses) — they read every
+# memory and would swamp read-counts. The opt-out is LOOP_REVIEWER=1 — NOT CLAUDE_CODE_CHILD_SESSION,
+# which this environment sets on normal top-level sessions too (it would exclude every real session).
 measure_on() {
   [ "${MEASUREMENT_ENABLED:-0}" = 1 ] && [ "${LOOP_ENABLED:-0}" = 1 ] || return 1
-  [ "${CLAUDE_CODE_CHILD_SESSION:-0}" = 1 ] && return 1
   [ -n "${LOOP_REVIEWER:-}" ] && return 1
   return 0
 }

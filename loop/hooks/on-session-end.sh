@@ -6,8 +6,7 @@ set -uo pipefail
 
 input="$(cat 2>/dev/null)"
 
-[ "${CLAUDE_CODE_CHILD_SESSION:-0}" = "1" ] && exit 0
-[ -n "${LOOP_REVIEWER:-}" ] && exit 0
+[ -n "${LOOP_REVIEWER:-}" ] && exit 0   # loop-internal claude -p opt-out (NOT CLAUDE_CODE_CHILD_SESSION — set on normal sessions here; see on-stop.sh)
 [ "${LOOP_ENABLED:-0}" = "1" ] || exit 0
 
 transcript="$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)"

@@ -6,7 +6,9 @@ set -uo pipefail
 
 input="$(cat 2>/dev/null)"                              # always drain stdin first
 
-[ "${CLAUDE_CODE_CHILD_SESSION:-0}" = "1" ] && exit 0   # never recurse into reviewer sessions
+# Opt out of loop-internal claude -p (reviewer/gardener/miner + any loop-adjacent harness — they export
+# LOOP_REVIEWER=1). Do NOT gate on CLAUDE_CODE_CHILD_SESSION: this environment stamps it on normal
+# top-level sessions too, which silently no-op'd every hook body (0 fires ever until the 2026-07-02 fix).
 [ -n "${LOOP_REVIEWER:-}" ] && exit 0
 [ "${LOOP_ENABLED:-0}" = "1" ] || exit 0
 

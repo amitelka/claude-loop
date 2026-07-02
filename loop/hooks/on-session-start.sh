@@ -6,8 +6,7 @@ set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || exit 0
 
 cat > /dev/null 2>&1                                     # drain stdin
-[ "${CLAUDE_CODE_CHILD_SESSION:-0}" = "1" ] && exit 0   # not in reviewer/child sessions
-[ -n "${LOOP_REVIEWER:-}" ] && exit 0
+[ -n "${LOOP_REVIEWER:-}" ] && exit 0   # loop-internal claude -p opt-out (NOT CLAUDE_CODE_CHILD_SESSION — set on normal sessions here; see on-stop.sh)
 
 maybe_selfheal_async   # fresh-launch self-heal (garden+miner); the Stop hook covers already-open sessions
 
