@@ -1,0 +1,7 @@
+# Recall-probe cases: prompt<TAB>expected_slug. Extend as memories that SHOULD be recalled accrue.
+# Run: loopctl-adjacent `bash bin/recall-probe.sh`. Tracks retriever recall over corpus growth.
+my pyenv build hangs with a dyld error on macos	macos-dev-env-gotchas
+lvremove is stalling ~5 seconds, is the logical volume held open	lvm-lv-attr-open-flag
+the gitlab packages api package_name filter returns extra unrelated packages	gitlab-package-name-fuzzy
+claude -p with --json-schema returned prose instead of json	claude-cli-json-schema-ignored
+this coroutine reads state before the observer runs, is there an interleaving bug	asyncio-await-point-reasoning
