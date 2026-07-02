@@ -25,6 +25,22 @@ measure_on() {
 }
 measure_append() { mkdir -p "$MEASURE_DIR" 2>/dev/null; printf '%s\n' "$2" >> "$MEASURE_DIR/$1.jsonl" 2>/dev/null; }  # $1=stream, $2=prebuilt json line
 
+# garden-actions sidecar: derive {deleted|added|modified|renamed} memory actions from the pre→post
+# garden git diff — DETERMINISTIC, not LLM-emitted (the prose digest already has rationale; this is its
+# machine-readable companion). Feeds regret-tracking + prune-class stats. Written on every successful
+# garden (gardener telemetry, not measurement-gated). MEMORY.md index churn is skipped (not an action).
+garden_actions() {  # $1=pre_rev $2=post_rev
+  local pre="$1" post="$2" run st path slug act
+  [ -n "$pre" ] && [ -n "$post" ] || return 0
+  run="$(date +%s)"; mkdir -p "$STATE_DIR" 2>/dev/null
+  mem_git diff --name-status "$pre" "$post" -- '*.md' 2>/dev/null | while IFS="$(printf '\t')" read -r st path; do
+    case "$path" in */MEMORY.md|MEMORY.md) continue;; esac
+    slug="$(basename "$path" .md)"
+    case "$st" in D) act=deleted;; A) act=added;; M) act=modified;; R*) act=renamed;; *) act="$st";; esac
+    printf '{"v":%s,"ts":%s,"stream":"garden-action","action":"%s","slug":"%s"}\n' "${MEASUREMENT_VERSION:-1}" "$run" "$act" "$slug"
+  done >> "$STATE_DIR/garden-actions.jsonl" 2>/dev/null
+}
+
 # Counts over a RAW JSONL slice on stdin.
 count_tools() { jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use") | .id' 2>/dev/null | wc -l | tr -d ' '; }
 count_turns() { jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="text")    | "x"' 2>/dev/null | wc -l | tr -d ' '; }

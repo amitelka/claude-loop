@@ -25,6 +25,7 @@ prompt="${prompt//'{{MAX_LINES}}'/$MEMORY_INDEX_MAX_LINES}"
 
 log "garden: start mode=$LOOP_MODE model=$GARDENER_MODEL ($tag)"
 mem_snapshot "pre-garden"   # rollback point before the gardener edits memory-global
+pre_rev="$(mem_git rev-parse HEAD 2>/dev/null)"   # for the garden-actions sidecar (diff vs post)
 raw="$(printf '%s' "$prompt" | claude -p \
   --model "$GARDENER_MODEL" \
   --effort "$GARDENER_EFFORT" \
@@ -54,6 +55,7 @@ fi
 
 if [ "$ok" = 1 ]; then
   mem_snapshot "post-garden"
+  garden_actions "$pre_rev" "$(mem_git rev-parse HEAD 2>/dev/null)"   # deterministic prune/merge/trim sidecar
   date +%s > "$STATE_DIR/garden.success"; rm -f "$STATE_DIR/garden.fail"
   log "garden: done (ok) cost=${cost:-?} -> $digest"
 else

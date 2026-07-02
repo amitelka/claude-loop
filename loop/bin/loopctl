@@ -92,6 +92,9 @@ PLIST
     echo "cost    : \$$ctot across $cn reviews (API-equivalent; subscription not billed per-call)"
     echo "mem git : $(mem_git status --porcelain 2>/dev/null | wc -l | tr -d ' ') uncommitted, $(mem_git rev-list --count HEAD 2>/dev/null || echo 0) snapshots"
     echo "outcomes: +mem=$(grep -c '  +mem ' "$l" 2>/dev/null) +skill=$(grep -c '  +skill ' "$l" 2>/dev/null) dup-skip=$(grep -cE '  skip (mem|skill) .*dup' "$l" 2>/dev/null) rejected=$(grep -cE '  reject (mem|skill)' "$l" 2>/dev/null) anomalies=$(grep -c 'ANOMALY' "$l" 2>/dev/null)"
+    ga="$STATE_DIR/garden-actions.jsonl"; gdel=0 gmod=0 gadd=0
+    [ -f "$ga" ] && { gdel=$(grep -c '"action":"deleted"' "$ga" 2>/dev/null); gmod=$(grep -c '"action":"modified"' "$ga" 2>/dev/null); gadd=$(grep -c '"action":"added"' "$ga" 2>/dev/null); }
+    echo "gardener: pruned/merged=$gdel trimmed=$gmod added=$gadd  regret=$(grep -c '  regret ' "$l" 2>/dev/null)  (regret = gardener-pruned then reviewer-recaptured)"
     sf="$STATE_DIR/skill-miner.state.json"; rj="$STATE_DIR/$REJECT_FILE_NAME"
     ml="$(grep 'mine-skills:' "$l" 2>/dev/null | tail -1)"
     mok="$(jq -r '.last_success_at // empty' "$sf" 2>/dev/null)"; [ -n "$mok" ] && mok="$(date -r "$mok" '+%F %H:%M' 2>/dev/null)"
@@ -118,7 +121,7 @@ PLIST
   skill-rollback)
     ref="${1:-}"; [ -n "$ref" ] || { echo "usage: loopctl skill-rollback <commit>   (see: git -C \"$SKILLS_DIR\" log --oneline)"; exit 1; }
     skill_snapshot "pre-rollback"
-    skill_git checkout "$ref" -- . && echo "skills restored to $ref (prior state snapshotted first)";;
+    skill_git checkout "$ref" -- . && { log "rollback: skills -> $ref"; echo "skills restored to $ref (prior state snapshotted first)"; };;
   skill-curate) bash "$LOOP_DIR/bin/skill-curate.sh";;
   skill-reject)
     n="${1:-}"; [ -n "$n" ] || { echo "usage: loopctl skill-reject <name> [new|patch]"; exit 1; }
@@ -139,7 +142,7 @@ PLIST
   rollback)
     ref="${1:-}"; [ -n "$ref" ] || { echo "usage: loopctl rollback <commit>   (see: loopctl mem-log)"; exit 1; }
     mem_snapshot "pre-rollback"
-    mem_git checkout "$ref" -- . && echo "memory-global restored to $ref (prior state saved as a snapshot first)";;
+    mem_git checkout "$ref" -- . && { log "rollback: memory-global -> $ref"; echo "memory-global restored to $ref (prior state saved as a snapshot first)"; };;
   doctor)
     okx(){ echo "  ✓ $1"; }; wrn(){ echo "  ⚠ $1"; }
     echo "── loop doctor ──"

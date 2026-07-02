@@ -51,6 +51,11 @@ for ((i=0; i<mlen && i<3; i++)); do
     grep -q "($slug.md)" "$MEMORY_DIR/MEMORY.md" 2>/dev/null || printf -- '- [%s](%s.md) — %s\n' "$slug" "$slug" "$desc" >> "$MEMORY_DIR/MEMORY.md"
   fi
   log "  +mem $slug -> ${dest#$HOME/}"; acc_m=$((acc_m+1))
+  # Regret signal: the gardener deleted this exact slug in a past run (garden-actions sidecar) and the
+  # reviewer just re-captured it → the prune was probably wrong. Detection only (we still wrote it above);
+  # exact-slug for now, near-match (reworded recaptures) is deferred to NEXT#5b's cross-source dedup.
+  grep -q "\"action\":\"deleted\",\"slug\":\"$slug\"" "$STATE_DIR/garden-actions.jsonl" 2>/dev/null \
+    && log "  regret $slug (gardener pruned it earlier; reviewer re-captured)"
 done
 
 [ "$wrote_active" = 1 ] && mem_snapshot "post-materialize-$session"
