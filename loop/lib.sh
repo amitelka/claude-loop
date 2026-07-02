@@ -6,6 +6,8 @@ LOOP_LIB_DIR="$(cd "$(dirname "$_LOOP_SELF")" 2>/dev/null && pwd)"
 [ -f "$LOOP_LIB_DIR/config.sh" ] || LOOP_LIB_DIR="$HOME/.claude/loop"
 # shellcheck disable=SC1091
 . "$LOOP_LIB_DIR/config.sh"
+# shellcheck disable=SC1091
+. "$LOOP_LIB_DIR/tags.sh"   # canonical log-tag substrings; stats/doctor grep via these (never literals)
 [ -f "$ENV_FILE" ] && . "$ENV_FILE"   # optional OAuth token for unattended cron
 
 ts()  { date '+%Y-%m-%dT%H:%M:%S%z'; }

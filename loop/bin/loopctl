@@ -80,12 +80,12 @@ PLIST
   stats)
     l="$LOG"; g="$MEMORY_DIR"
     echo "── loop stats ──"
-    echo "reviews : started=$(grep -c 'review: start' "$l" 2>/dev/null)  ok=$(grep -c 'valid proposal' "$l" 2>/dev/null)  invalid=$(grep -c 'INVALID JSON' "$l" 2>/dev/null)"
-    echo "triggers: stop=$(grep -c 'stop: trigger' "$l" 2>/dev/null)  session-end=$(grep -c 'session-end: review' "$l" 2>/dev/null)  harvest=$(grep -c 'harvest: nightly' "$l" 2>/dev/null)  garden=$(grep -c 'garden: start' "$l" 2>/dev/null)"
-    echo "self-heal: presence-spawns=$(grep -c 'self-heal' "$l" 2>/dev/null)  garden-catchup=$(grep -c 'garden catch-up' "$l" 2>/dev/null)  miner-catchup=$(grep -c 'miner catch-up' "$l" 2>/dev/null)"
+    echo "reviews : started=$(grep -c "$TAG_REVIEW_START" "$l" 2>/dev/null)  ok=$(grep -c "$TAG_REVIEW_OK" "$l" 2>/dev/null)  invalid=$(grep -c 'INVALID JSON' "$l" 2>/dev/null)"
+    echo "triggers: stop=$(grep -c "$TAG_STOP_TRIGGER" "$l" 2>/dev/null)  session-end=$(grep -c "$TAG_SESSION_END" "$l" 2>/dev/null)  harvest=$(grep -c "$TAG_HARVEST" "$l" 2>/dev/null)  garden=$(grep -c "$TAG_GARDEN_START" "$l" 2>/dev/null)"
+    echo "self-heal: presence-spawns=$(grep -c "$TAG_SELFHEAL" "$l" 2>/dev/null)  garden-catchup=$(grep -c "$TAG_GARDEN_CATCHUP" "$l" 2>/dev/null)  miner-catchup=$(grep -c "$TAG_MINER_CATCHUP" "$l" 2>/dev/null)"
     echo "library : global=$(ls "$g"/*.md 2>/dev/null | grep -vc MEMORY.md)  held=$(find "$PENDING_MEM" -maxdepth 1 -name '*.md' ! -name '*.WHY.md' 2>/dev/null | wc -l | tr -d ' ')  pending-skills=$(pending_skill_count)  dropped=$(ls "$ARCHIVE_DIR/dropped"/*.md 2>/dev/null | grep -vc WHY)"
     echo "MEMORY  : $(grep -cE '^- \[' "$g/MEMORY.md" 2>/dev/null) pointers, $(wc -l < "$g/MEMORY.md" 2>/dev/null | tr -d ' ')/$MEMORY_INDEX_MAX_LINES lines"
-    echo "snapshots: $(mem_git rev-list --count HEAD 2>/dev/null || echo 0)   last review: $(grep 'review: start' "$l" 2>/dev/null | tail -1 | cut -c1-19)"
+    echo "snapshots: $(mem_git rev-list --count HEAD 2>/dev/null || echo 0)   last review: $(grep "$TAG_REVIEW_START" "$l" 2>/dev/null | tail -1 | cut -c1-19)"
     ctot=$(grep -oE 'cost=[0-9.]+' "$l" 2>/dev/null | sed 's/cost=//' | awk '{s+=$1} END{printf "%.4f", s+0}')
     cn=$(grep -cE 'cost=[0-9.]+' "$l" 2>/dev/null)
     echo "cost    : \$$ctot across $cn reviews (API-equivalent; subscription not billed per-call)"
@@ -95,10 +95,10 @@ PLIST
     ml="$(grep 'mine-skills:' "$l" 2>/dev/null | tail -1)"
     mok="$(jq -r '.last_success_at // empty' "$sf" 2>/dev/null)"; [ -n "$mok" ] && mok="$(date -r "$mok" '+%F %H:%M' 2>/dev/null)"
     rdl=0; [ -f "$rj" ] && rdl="$(wc -l < "$rj" | tr -d ' ')"
-    mreal=$(grep 'mine-skills: done' "$l" 2>/dev/null | grep -c 'dry=0'); mdry=$(grep 'mine-skills: done' "$l" 2>/dev/null | grep -c 'dry=1')
+    mreal=$(grep "$TAG_MINE_DONE" "$l" 2>/dev/null | grep -c 'dry=0'); mdry=$(grep "$TAG_MINE_DONE" "$l" 2>/dev/null | grep -c 'dry=1')
     msupe=$(grep -oE 'suppressed=\[[^]]*\]' "$l" 2>/dev/null | sed -E 's/suppressed=\[//; s/\]//' | tr ',' '\n' | grep -c '[^[:space:]]')
     echo "miner   : last=$(printf '%s' "$ml" | cut -c1-19 | sed 's/^$/never/') \"$(printf '%s' "$ml" | sed -E 's/^[^ ]+ mine-skills: //' | cut -c1-44)\""
-    echo "          runs=$((mreal+mdry)) real=$mreal dry=$mdry fails=$(grep -c 'mine-skills: FAILED' "$l" 2>/dev/null)  rejection-denylist=$rdl suppressed-events=$msupe  last-success=${mok:-never}  pending-fail=$([ -f "$STATE_DIR/skill-miner.fail" ] && echo yes || echo no)"
+    echo "          runs=$((mreal+mdry)) real=$mreal dry=$mdry fails=$(grep -c "$TAG_MINE_FAILED" "$l" 2>/dev/null)  rejection-denylist=$rdl suppressed-events=$msupe  last-success=${mok:-never}  pending-fail=$([ -f "$STATE_DIR/skill-miner.fail" ] && echo yes || echo no)"
     ;;
   skill-stats)
     f="$STATE_DIR/skill-uses.jsonl"; [ -s "$f" ] || { echo "no skill usage logged yet ($f)"; exit 0; }

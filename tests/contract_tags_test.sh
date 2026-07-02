@@ -1,30 +1,29 @@
 #!/usr/bin/env bash
-# Log-tag contract: every string that loopctl's stats/doctor greps for MUST be emitted by some
-# writer's log "..." line. Guards the exact failure that made `last review` read 9 days stale —
-# a review.sh refactor dropped `review: done` while loopctl still greped it. If a writer renames
-# a tag without updating the consumer (or vice-versa), this test fails instead of silently reading 0.
+# Log-tag contract: every tag in loop/tags.sh (the single source stats/doctor grep via) MUST be
+# emitted by some writer's log "..." line, and loopctl must reference the vars (not literals).
+# Guards the failure that made `last review` read 9 days stale — a review.sh refactor dropped
+# `review: done` while loopctl still greped it. Now drift fails CI instead of silently reading 0.
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 writers=("$root/loop/bin" "$root/loop/hooks" "$root/loop/lib.sh")
+# shellcheck source=/dev/null
+. "$root/loop/tags.sh"
 rc=0
 
 emitted() { grep -rqE "log \"[^\"]*$1" "${writers[@]}" 2>/dev/null; }
-check() {  # $1 = substring a consumer greps for ; $2 = which consumer depends on it
-  if emitted "$1"; then echo "  ok    emitted: '$1'"
-  else echo "  FAIL  no writer emits '$1'  (consumer: $2)"; rc=1; fi
+check() {  # $1 = var name, $2 = value
+  if [ -z "$2" ]; then echo "  FAIL  $1 is empty in tags.sh"; rc=1
+  elif emitted "$2"; then echo "  ok    $1='$2' — emitted by a writer"
+  else echo "  FAIL  $1='$2' — NO writer emits it (drift)"; rc=1; fi
 }
 
-# loopctl stats/doctor consumer strings → the writer that must keep emitting them:
-check 'review: start'       'stats reviews-started + last-review'
-check 'valid proposal'      'stats reviews-ok'
-check 'harvest: nightly'    'stats triggers-harvest'
-check 'garden: start'       'stats triggers-garden'
-check 'stop: trigger'       'stats triggers-stop'
-check 'session-end: review' 'stats triggers-session-end'
-check 'self-heal'           'stats self-heal presence-spawns'
-check 'garden catch-up'     'stats self-heal garden-catchup'
-check 'miner catch-up'      'stats self-heal miner-catchup'
-check 'mine-skills: done'   'stats miner runs (real/dry)'
-check 'mine-skills: FAILED' 'stats miner fails'
+for v in TAG_REVIEW_START TAG_REVIEW_OK TAG_HARVEST TAG_GARDEN_START TAG_STOP_TRIGGER \
+         TAG_SESSION_END TAG_SELFHEAL TAG_GARDEN_CATCHUP TAG_MINER_CATCHUP TAG_MINE_DONE TAG_MINE_FAILED; do
+  check "$v" "${!v-}"
+done
+
+# Consumers must reference the vars, not silently revert to string literals:
+if grep -q 'TAG_REVIEW_START' "$root/loop/bin/loopctl"; then echo "  ok    loopctl references the TAG_* registry"
+else echo "  FAIL  loopctl no longer references TAG_* vars (reverted to literals?)"; rc=1; fi
 
 exit "$rc"
