@@ -8,7 +8,7 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 export CLAUDE_CONFIG_DIR="$tmp"; mkdir -p "$tmp/loop/state"
 # shellcheck source=/dev/null
 . "$root/loop/lib.sh" 2>/dev/null || { echo "  FAIL  cannot source lib.sh"; exit 1; }
-mkdir -p "$STATE_DIR"
+mkdir -p "$STATE_DIR" "$(dirname "$LOG")"
 now="$(date +%s)"; rc=0
 ok() { if [ "$1" = "$2" ]; then echo "  ok    $3"; else echo "  FAIL  $3 (got '$1' want '$2')"; rc=1; fi; }
 
@@ -33,5 +33,19 @@ SKILL_MINER_ENABLED=1 miner_catchup_due; ok "$?" 0 "enabled + fail → due"
 SKILL_MINER_ENABLED=0 miner_catchup_due; ok "$?" 1 "disabled → not due"
 SKILL_MINER_ENABLED=1; rm -f "$STATE_DIR/skill-miner.fail"
 miner_catchup_due; ok "$?" 1 "enabled, no fail marker → not due"
+
+# ── maybe_selfheal_async: atomic single-worker gate (concurrent Stop/SessionStart hooks → ≤1 worker) ──
+export LOOP_ENABLED=1 SKILL_MINER_ENABLED=0
+rm -f "$STATE_DIR/garden.success" "$STATE_DIR/garden.catchup" "$STATE_DIR/selfheal.lock"
+echo x > "$STATE_DIR/garden.fail"                                   # garden catch-up is due
+mkdir -p "$LOOP_DIR/bin"                                            # stub worker that does NOT release the gate,
+printf '#!/usr/bin/env bash\n:\n' > "$LOOP_DIR/bin/selfheal.sh"     # so the held lock is what blocks re-spawns
+: > "$LOG"
+maybe_selfheal_async; maybe_selfheal_async; maybe_selfheal_async    # 3 concurrent-ish fires
+ok "$(grep -c 'self-heal' "$LOG")" 1 "3 fires, gate held → exactly 1 worker spawned"
+rm -rf "$STATE_DIR/selfheal.lock"; maybe_selfheal_async             # gate released
+ok "$(grep -c 'self-heal' "$LOG")" 2 "gate released → next fire spawns"
+LOOP_ENABLED=0; rm -rf "$STATE_DIR/selfheal.lock"; : > "$LOG"; maybe_selfheal_async
+ok "$(grep -c 'self-heal' "$LOG")" 0 "LOOP_ENABLED=0 → no spawn"
 
 exit "$rc"
