@@ -14,6 +14,11 @@ The loop stages candidate memories in `~/.claude/loop/pending/memories/<slug>.md
 2. **Snapshot first** so every change is reversible: `bash ~/.claude/loop/bin/loopctl snapshot` (note the commit ref it prints).
 3. For each memory, Read its `.md` and its `.WHY.md`. Present concisely: slug, `type`, the one-line description, a 1–2 line gist of the body, and from WHY — the `repo` tag (if any), source session(s), and rationale.
 4. Give your own quick read: is it durable, non-obvious, reusable, and *still true*? Grep `~/.claude/memory-global/` to confirm it isn't a duplicate. Flag stale/contradicted ones — e.g. evolving-investigation snapshots — for re-verification before promoting.
+
+   **Verification traps** (before you reject or promote):
+   - *Contradiction may be a transient branch state — check the branch before rejecting.* If current code appears to contradict the memory's central claim, run `git -C <repo> branch --show-current` (empty output = detached HEAD) and `git -C <repo> log --oneline -1`. If the repo isn't on `main`, the contradiction may be a hotfix/feature-branch state reverting to what the memory describes — surface the branch and ask (reject vs approve-with-correction), don't silently reject.
+   - *Editing ≠ only fixing the flagged claim.* On an edited promote, list every distinct factual claim left in the final text and verify each against the repo (grep/git log) — including any hedged or demoted "alternative" you kept. Verifying only the trigger claim silently reintroduces unverified assertions.
+   - *Grep-verify every file path a loop memory cites.* Loop paths often drop the top-level package dir (`encryption/__init__.py:25` should be `verios_builder/encryption/__init__.py:25`). Run `grep -rn '<symbol or filename>' <repo-root>` for each cited path before approving; patch the prefix if it doesn't resolve.
 5. Ask the user to approve / reject / skip each (offer to batch, e.g. "promote all", "reject the stale ones").
 6. On **approve** (every memory goes to the global store — `repo` is only a tag, never a separate location):
    - `mv` the `.md` to `~/.claude/memory-global/<slug>.md`. If its WHY names a `repo` and the frontmatter has no `repo:` field yet, add `  repo: <name>` under `metadata:`.
