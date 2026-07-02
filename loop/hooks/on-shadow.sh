@@ -12,6 +12,6 @@ prompt="$(printf '%s' "$input" | jq -r '.prompt // empty' 2>/dev/null)"
 line="$(MEM_INDEX="$MEMORY_DIR/MEMORY.md" MV="$MEASUREMENT_VERSION" \
         SID="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)" \
         PID="$(printf '%s' "$input" | jq -r '.prompt_id // empty' 2>/dev/null)" \
-        PROMPT="$prompt" /usr/bin/python3 "$LOOP_DIR/bin/shadow_score.py" 2>/dev/null)"
+        /usr/bin/python3 "$LOOP_DIR/bin/shadow_score.py" <<<"$prompt" 2>/dev/null)"
 [ -n "$line" ] && measure_append shadow "$line"
 exit 0

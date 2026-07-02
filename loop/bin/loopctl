@@ -94,7 +94,7 @@ PLIST
     echo "outcomes: +mem=$(grep -c '  +mem ' "$l" 2>/dev/null) +skill=$(grep -c '  +skill ' "$l" 2>/dev/null) dup-skip=$(grep -cE '  skip (mem|skill) .*dup' "$l" 2>/dev/null) rejected=$(grep -cE '  reject (mem|skill)' "$l" 2>/dev/null) anomalies=$(grep -c 'ANOMALY' "$l" 2>/dev/null)"
     ga="$STATE_DIR/garden-actions.jsonl"; gdel=0 gmod=0 gadd=0
     [ -f "$ga" ] && { gdel=$(grep -c '"action":"deleted"' "$ga" 2>/dev/null); gmod=$(grep -c '"action":"modified"' "$ga" 2>/dev/null); gadd=$(grep -c '"action":"added"' "$ga" 2>/dev/null); }
-    echo "gardener: pruned/merged=$gdel trimmed=$gmod added=$gadd  regret=$(grep -c '  regret ' "$l" 2>/dev/null)  (regret = gardener-pruned then reviewer-recaptured)"
+    echo "gardener: pruned/merged=$gdel trimmed=$gmod added=$gadd  regret=$(grep -c "$TAG_REGRET" "$l" 2>/dev/null)  (regret = gardener-pruned then reviewer-recaptured)"
     sf="$STATE_DIR/skill-miner.state.json"; rj="$STATE_DIR/$REJECT_FILE_NAME"
     ml="$(grep 'mine-skills:' "$l" 2>/dev/null | tail -1)"
     mok="$(jq -r '.last_success_at // empty' "$sf" 2>/dev/null)"; [ -n "$mok" ] && mok="$(date -r "$mok" '+%F %H:%M' 2>/dev/null)"

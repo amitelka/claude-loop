@@ -15,3 +15,4 @@ TAG_GARDEN_CATCHUP="garden catch-up"    # a garden catch-up fired (stats: self-h
 TAG_MINER_CATCHUP="miner catch-up"      # a miner catch-up fired (stats: self-heal miner-catchup)
 TAG_MINE_DONE="mine-skills: done"       # a mine run completed (stats: miner runs real/dry)
 TAG_MINE_FAILED="mine-skills: FAILED"   # a mine run hard-failed (stats: miner fails)
+TAG_REGRET="  regret "                  # gardener pruned a slug the reviewer later re-captured (stats: regret)

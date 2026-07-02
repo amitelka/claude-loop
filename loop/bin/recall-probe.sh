@@ -15,8 +15,8 @@ while IFS=$'\t' read -r prompt expect _; do
   case "$prompt" in ''|'#'*) continue;; esac
   [ -n "${expect:-}" ] || continue
   n=$((n + 1))
-  slugs="$(MEM_INDEX="$MEMORY_DIR/MEMORY.md" PROMPT="$prompt" MV="$MEASUREMENT_VERSION" \
-           /usr/bin/python3 "$LOOP_DIR/bin/shadow_score.py" 2>/dev/null | jq -r '.top[].slug' 2>/dev/null)"
+  slugs="$(MEM_INDEX="$MEMORY_DIR/MEMORY.md" MV="$MEASUREMENT_VERSION" \
+           /usr/bin/python3 "$LOOP_DIR/bin/shadow_score.py" <<<"$prompt" 2>/dev/null | jq -r '.top[].slug' 2>/dev/null)"
   t1="$(printf '%s\n' "$slugs" | head -1)"
   if [ "$t1" = "$expect" ]; then h1=$((h1 + 1)); h3=$((h3 + 1)); v="hit@1"
   elif printf '%s\n' "$slugs" | grep -qxF "$expect"; then h3=$((h3 + 1)); v="hit@3"

@@ -30,10 +30,10 @@ measure_append() { mkdir -p "$MEASURE_DIR" 2>/dev/null; printf '%s\n' "$2" >> "$
 # machine-readable companion). Feeds regret-tracking + prune-class stats. Written on every successful
 # garden (gardener telemetry, not measurement-gated). MEMORY.md index churn is skipped (not an action).
 garden_actions() {  # $1=pre_rev $2=post_rev
-  local pre="$1" post="$2" run st path slug act
+  local pre="$1" post="$2" run st old path slug act
   [ -n "$pre" ] && [ -n "$post" ] || return 0
   run="$(date +%s)"; mkdir -p "$STATE_DIR" 2>/dev/null
-  mem_git diff --name-status "$pre" "$post" -- '*.md' 2>/dev/null | while IFS="$(printf '\t')" read -r st path; do
+  mem_git diff --name-status "$pre" "$post" -- '*.md' 2>/dev/null | while IFS="$(printf '\t')" read -r st old path; do [ -n "$path" ] || path="$old"
     case "$path" in */MEMORY.md|MEMORY.md) continue;; esac
     slug="$(basename "$path" .md)"
     case "$st" in D) act=deleted;; A) act=added;; M) act=modified;; R*) act=renamed;; *) act="$st";; esac
