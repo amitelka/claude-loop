@@ -25,7 +25,7 @@ n_turns="$(count_turns < "$slice")"
 n_tools="$(count_tools < "$slice")"
 if [ "${n_turns:-0}" -ge 2 ] || [ "${n_tools:-0}" -ge 2 ]; then
   log "session-end: review session=$session turns=$n_turns tools=$n_tools end=$(printf '%s' "$input" | jq -r '.end_reason // "?"' 2>/dev/null)"
-  nohup bash "$LOOP_DIR/bin/review.sh" "$slice" "$session" "$cwd" "$cur" >> "$LOG" 2>&1 < /dev/null & disown
+  nohup bash "$LOOP_DIR/bin/review.sh" "$slice" "$session" "$cwd" "$cur" "session-end" >> "$LOG" 2>&1 < /dev/null & disown
 else
   rm -f "$slice"
 fi

@@ -39,7 +39,7 @@ turn_hit=0; tool_hit=0
 if [ "$turn_hit" = 1 ] || [ "$tool_hit" = 1 ]; then
   log "stop: trigger session=$session turns=$n_turns tools=$n_tools (lines $((last + 1))-$cur)"
   # watermark advances inside review.sh only on success (failed/API-errored reviews retry); lock prevents double-spawn.
-  nohup bash "$LOOP_DIR/bin/review.sh" "$slice" "$session" "$cwd" "$cur" >> "$LOG" 2>&1 < /dev/null & disown
+  nohup bash "$LOOP_DIR/bin/review.sh" "$slice" "$session" "$cwd" "$cur" "stop" >> "$LOG" 2>&1 < /dev/null & disown
 else
   rm -f "$slice"
 fi

@@ -8,7 +8,7 @@ set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || exit 1
 export LOOP_REVIEWER=1
 
-slice_raw="${1:?slice file}"; session="${2:-manual}"; cwd="${3:-$PWD}"; wm_line="${4:-}"
+slice_raw="${1:?slice file}"; session="${2:-manual}"; cwd="${3:-$PWD}"; wm_line="${4:-}"; trigger="${5:-?}"
 slice_txt=""
 [ -f "$slice_raw" ] || { log "review: no slice file $slice_raw"; exit 1; }
 
@@ -32,7 +32,7 @@ prompt="${prompt//'{{SKILLS_DIR}}'/$SKILLS_DIR}"
 prompt="${prompt//'{{PROPOSAL_FILE}}'/$proposal}"
 
 guard_before="$(loop_manifest)"   # write-scope guard: fingerprint of memory-global + pending + skills
-log "review: start session=$session mode=$LOOP_MODE model=$REVIEWER_MODEL (writes proposal file)"
+log "review: start session=$session trigger=$trigger mode=$LOOP_MODE model=$REVIEWER_MODEL (writes proposal file)"
 raw="$(printf '%s' "$prompt" | claude -p \
   --model "$REVIEWER_MODEL" \
   --effort "$REVIEWER_EFFORT" \

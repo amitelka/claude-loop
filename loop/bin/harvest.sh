@@ -19,7 +19,7 @@ find "$proj_root" -name '*.jsonl' -type f -mtime -2 -not -path '*/subagents/*' -
   if [ "${n_turns:-0}" -ge 2 ] || [ "${n_tools:-0}" -ge 3 ]; then
     cwd="$(jq -r 'select(.cwd) | .cwd' "$t" 2>/dev/null | tail -1)"
     log "harvest: session=$session turns=$n_turns tools=$n_tools"
-    bash "$LOOP_DIR/bin/review.sh" "$slice" "$session" "${cwd:-$PWD}" "$cur"
+    bash "$LOOP_DIR/bin/review.sh" "$slice" "$session" "${cwd:-$PWD}" "$cur" "harvest"
   else
     rm -f "$slice"
   fi
