@@ -34,8 +34,8 @@ MEASUREMENT_VERSION=1     # bump on any scorer/schema change so mid-window regim
 # ── Cross-agent: share memory-global into peer-agent homes (read-only; `loopctl share-memory`) ──
 # :-separated peer home dirs (use $HOME/…, not ~). Adapter auto-detected per home: config.toml+auth.json
 # → codex (writes an AGENTS.md memory-pointer); settings.json → claude (skipped — native auto-load already
-# covers it); unknown → warned + skipped. The loop's own CLAUDE_HOME is never a target. "" = off; run bare
-# and it defaults to ~/.codex if present.
+# covers it); unknown → warned + skipped. The loop's own CLAUDE_HOME is never a target. "" = off — pass
+# homes as args to `loopctl share-memory` or set this key; no implicit default (targets are explicit).
 SHARE_MEMORY_HOMES=""
 
 # ── Paths (honor CLAUDE_CONFIG_DIR so a temp install can be tested in isolation) ─

@@ -38,4 +38,9 @@ argh="$tmp/argcx"; mkdir -p "$argh"; touch "$argh/config.toml" "$argh/auth.json"
 bash "$loopctl" share-memory "$argh" >/dev/null 2>&1
 ok "$([ -f "$argh/AGENTS.md" ] && echo yes || echo no)" yes "explicit home arg → surfaced (overrides config)"
 
+# no homes given + none configured → no-op with usage (no implicit ~/.codex default)
+printf 'LOOP_ENABLED=1\nSHARE_MEMORY_HOMES=""\n' > "$tmp/loop/config.local.sh"
+noop="$(bash "$loopctl" share-memory 2>&1)"
+printf '%s' "$noop" | grep -qi 'no homes given'; ok "$?" 0 "no homes + no config → usage, no implicit default"
+
 exit "$rc"

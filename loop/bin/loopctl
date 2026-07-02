@@ -180,11 +180,8 @@ PLIST
     ;;
   share-memory)   # share memory-global into peer-agent homes; adapter auto-detected per home (codex→AGENTS.md pointer; claude→native, skipped)
     homes="${SHARE_MEMORY_HOMES:-}"
-    [ "$#" -gt 0 ] && homes="$(printf '%s:' "$@")"   # explicit `share-memory <home>...` args override the config (one-off)
-    if [ -z "$homes" ]; then
-      if [ -d "$HOME/.codex" ]; then homes="$HOME/.codex"; echo "  SHARE_MEMORY_HOMES unset — defaulting to ~/.codex (set it in $local_cfg to change/add homes)"
-      else echo "SHARE_MEMORY_HOMES unset and no ~/.codex — set it (:-separated) in $local_cfg"; exit 0; fi
-    fi
+    [ "$#" -gt 0 ] && homes="$(printf '%s:' "$@")"   # explicit `share-memory <home>...` args override the config
+    [ -n "$homes" ] || { echo "share-memory: no homes given — pass them (e.g. \`loopctl share-memory ~/.codex\`) or set SHARE_MEMORY_HOMES (:-separated) in $local_cfg. No implicit default — targets are explicit and tool-agnostic."; exit 0; }
     _ptr() { cat <<PTR
 <!-- claude-loop:memory-global BEGIN (managed by \`loopctl share-memory\`; edit SHARE_MEMORY_HOMES in config.local.sh) -->
 ## Durable memory (shared with Claude Code — read-only)
