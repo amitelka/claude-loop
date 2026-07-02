@@ -5,6 +5,7 @@ loop/.env
 # Working/planning notes — personal + project context, not part of the distributed loop
 backlog.md
 hermes-comparison.md
+DONE.md
 
 # Runtime state & data (created at install; never belongs in the repo)
 loop/state/
