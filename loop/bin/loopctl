@@ -178,5 +178,32 @@ PLIST
     [ "${sp:-0}" -gt 0 ] && wrn "$sp skill proposal(s) pending → /review-skills"
     echo "    (never-used / stale / archive candidates deferred until telemetry matures — detail: loopctl skill-curate)"
     ;;
-  *) echo "usage: loopctl {status|stats|skill-stats|mine-skills [--dry-run]|skill-curate|skill-snapshot|skill-rollback <ref>|doctor|enable|disable|mode dry-run|active|review-now|snapshot|rollback <ref>|mem-log|mem-diff|install-schedule|uninstall-schedule|token}";;
+  codex-surface)   # surface memory-global into Codex: write/refresh a read-only memory-pointer AGENTS.md in each CODEX_HOMES dir
+    homes="${CODEX_HOMES:-}"
+    if [ -z "$homes" ]; then
+      if [ -d "$HOME/.codex" ]; then homes="$HOME/.codex"; echo "  CODEX_HOMES unset — defaulting to ~/.codex (set it in $local_cfg to change/add homes)"
+      else echo "CODEX_HOMES unset and no ~/.codex — set CODEX_HOMES (:-separated) in $local_cfg"; exit 0; fi
+    fi
+    _ptr() { cat <<PTR
+<!-- claude-loop:memory-global BEGIN (managed by \`loopctl codex-surface\`; edit CODEX_HOMES in config.local.sh) -->
+## Durable memory (shared with Claude Code — read-only)
+At session start, Read \`$MEMORY_DIR/MEMORY.md\`: a one-line index of durable facts and preferences.
+Full memory bodies live in that same directory — Read the specific \`<slug>.md\` when a topic matches its
+description. Treat these as authoritative prior context. Do NOT write there; Claude Code's self-improving
+loop curates that store.
+<!-- claude-loop:memory-global END -->
+PTR
+    }
+    IFS=':' read -ra _hs <<< "$homes"
+    for h in "${_hs[@]}"; do
+      [ -n "$h" ] || continue
+      h="${h/#\~/$HOME}"   # expand a leading ~ (tildes don't expand inside quoted config values)
+      mkdir -p "$h" 2>/dev/null || { echo "  skip $h (mkdir failed)"; continue; }
+      a="$h/AGENTS.md"; t="$(mktemp)"
+      [ -f "$a" ] && awk 'BEGIN{s=0} /claude-loop:memory-global BEGIN/{s=1} s==0{print} /claude-loop:memory-global END/{s=0}' "$a" > "$t"
+      { [ -s "$t" ] && { cat "$t"; echo; }; _ptr; } > "$a"
+      rm -f "$t"; echo "  surfaced memory-global pointer -> $a"
+    done
+    ;;
+  *) echo "usage: loopctl {status|stats|skill-stats|mine-skills [--dry-run]|skill-curate|skill-snapshot|skill-rollback <ref>|doctor|enable|disable|mode dry-run|active|review-now|snapshot|rollback <ref>|mem-log|mem-diff|codex-surface|install-schedule|uninstall-schedule|token}";;
 esac
