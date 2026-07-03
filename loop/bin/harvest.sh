@@ -3,6 +3,7 @@
 # per-turn threshold, or that ended). Shares the watermark with the Stop hook.
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || exit 1
+guard_loop_enabled harvest   # kill switch: autonomous entry point no-ops when LOOP_ENABLED=0
 
 proj_root="$CLAUDE_HOME/projects"
 find "$proj_root" -name '*.jsonl' -type f -mtime -2 -not -path '*/subagents/*' -not -path '*/workflows/*' 2>/dev/null | while read -r t; do

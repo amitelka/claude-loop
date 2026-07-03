@@ -4,6 +4,7 @@
 # detached) so the garden→miner sequencing is identical everywhere. $1 = reason label (for the log).
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || exit 0
+guard_loop_enabled garden-then-mine   # kill switch: detached worker no-ops when LOOP_ENABLED=0
 
 reason="${1:-catch-up}"
 gok="$(cat "$STATE_DIR/garden.success" 2>/dev/null || echo 0)"

@@ -11,6 +11,9 @@ dry=0; force=0; sched=0; catchup=0; for a in "$@"; do case "$a" in --dry-run) dr
 own_fail=0; { [ "$sched" = 1 ] || [ "$catchup" = 1 ]; } && [ "$dry" = 0 ] && own_fail=1
 # --catch-up = self-heal mode (harvest, after a confirmed garden): bypasses the cadence floor (the corpus
 # just changed) but still honors enabled / skip-if-unchanged / rejected-dedup / store.lock — NOT blunt --force.
+# Kill switch is MASTER over SKILL_MINER_ENABLED: gate UNATTENDED runs on LOOP_ENABLED first; a manual
+# `loopctl mine-skills` (operator-invoked) is deliberately NOT gated — control commands work while off.
+{ [ "$sched" = 1 ] || [ "$catchup" = 1 ]; } && ! loop_enabled && { log "mine-skills: skip: LOOP_ENABLED=0"; exit 0; }
 { [ "$sched" = 1 ] || [ "$catchup" = 1 ]; } && [ "${SKILL_MINER_ENABLED:-0}" != 1 ] && { log "mine-skills: unattended run but SKILL_MINER_ENABLED=0 — skip"; exit 0; }
 
 acquire_store_lock "mine-skills" || { log "mine-skills: memory store busy (garden or miner running) — skip"; echo "mine-skills: store busy — skip (retry later / after garden finishes)"; exit 0; }

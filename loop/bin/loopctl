@@ -63,6 +63,7 @@ PLIST
     fi
     echo "scheduled via launchd (daily; a run missed while asleep/off fires on next wake/login)."
     echo "NOTE: unattended runs need a subscription token — run: loopctl token"
+    loop_enabled || echo "NOTE: LOOP_ENABLED=0 — jobs are installed but no-op until \`loopctl enable\` (they honor the kill switch)."
     ;;
   uninstall-schedule)
     la="$HOME/Library/LaunchAgents"
@@ -154,7 +155,8 @@ PLIST
     case "$(hookcmd UserPromptSubmit)" in *"gate-runner.sh prompt-submit"*) okx "inject: prompt-submit gate wired";; *) wrn "inject: prompt-submit gate NOT wired (claude-loop install)";; esac
     case "$(hookcmd PreToolUse)" in *"gate-runner.sh subagent-spawn"*) okx "inject: subagent-spawn gate wired";; *) wrn "inject: subagent-spawn gate NOT wired (claude-loop install)";; esac
     case "$(hookcmd PreCompact)" in *"on-precompact.sh"*) okx "inject: PreCompact dedup-reset wired";; *) wrn "inject: PreCompact dedup-reset NOT wired (claude-loop install)";; esac
-    la=$(launchctl list 2>/dev/null | grep -c claudeloop); [ "${la:-0}" -ge 2 ] && okx "launchd: $la agents loaded" || wrn "launchd: ${la:-0}/2 (run: loopctl install-schedule)"
+    la=$(launchctl list 2>/dev/null | grep -c claudeloop); en=0; loop_enabled && en=1
+    m="$(schedule_doctor_verdict "$en" "$la")" && okx "$m" || wrn "$m"
     dd=$(mem_git status --porcelain 2>/dev/null | wc -l | tr -d ' '); [ "${dd:-0}" = 0 ] && okx "memory-global clean" || wrn "memory-global: $dd uncommitted (loopctl snapshot)"
     idx="$STATE_DIR/mem-index.json"
     if [ ! -f "$idx" ]; then wrn "mem-index.json missing — retriever scores an empty corpus (loopctl reindex)"

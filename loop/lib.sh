@@ -13,6 +13,34 @@ LOOP_LIB_DIR="$(cd "$(dirname "$_LOOP_SELF")" 2>/dev/null && pwd)"
 ts()  { date '+%Y-%m-%dT%H:%M:%S%z'; }
 log() { printf '%s %s\n' "$(ts)" "$*" >> "$LOG" 2>/dev/null; }
 
+# ── Kill switch ──────────────────────────────────────────────────────────────
+# LOOP_ENABLED is the master switch. The hook path already honors it (on-stop / on-session-end +
+# measure_on + the self-heal maybe_* gates). These helpers extend it to the SCHEDULED/DETACHED
+# autonomous entry points (launchd-invoked or nohup-spawned), which previously ran regardless — so
+# LOOP_ENABLED=0 truly means "whole loop inert" per BEHAVIOR.md. Operator-control commands
+# (loopctl status/doctor/rollback/…) deliberately do NOT gate on this — they must work while off.
+loop_enabled() { [ "${LOOP_ENABLED:-0}" = "1" ]; }
+# Source of truth for the autonomous entry-point set the contract test enforces (tests/kill_switch_test.sh):
+# registration-derived ∪ detached workers — garden-then-mine.sh is nohup-spawned, NOT launchd-registered.
+# shellcheck disable=SC2034  # consumed cross-file by tests/kill_switch_test.sh, not by runtime code
+LOOP_AUTONOMOUS_ENTRYPOINTS=(garden.sh harvest.sh mine-skills.sh garden-then-mine.sh)
+guard_loop_enabled() {  # $1 = entry-point label; log one line + exit 0 (fail-open, no work) when disabled
+  loop_enabled && return 0
+  log "$1: skip: LOOP_ENABLED=0"
+  exit 0
+}
+# Doctor's launchd verdict as a PURE function (enabled + agent count → line; rc 0=ok 1=warn) so the 2×2 is
+# unit-testable without touching real launchd state; `loopctl doctor` is a thin caller. See tests/kill_switch_test.sh.
+schedule_doctor_verdict() {  # $1=enabled(0/1) $2=launchd agent count
+  local en="${1:-0}" n="${2:-0}"
+  if [ "$en" = 1 ]; then
+    [ "$n" -ge 2 ] && { echo "launchd: $n agents loaded"; return 0; }
+    echo "launchd: $n/2 loaded — idle maintenance off; presence self-heal still covers activity (loopctl install-schedule)"; return 1
+  fi
+  [ "$n" = 0 ] && { echo "launchd: schedule absent — coherent with LOOP_ENABLED=0"; return 0; }
+  echo "launchd: $n agent(s) loaded but LOOP_ENABLED=0 — scheduled runs no-op (loopctl uninstall-schedule, or enable)"; return 1
+}
+
 # ── Passive measurement (observation window B): log-only telemetry, gated + loop-session-filtered ──
 # measure_on: should this event be recorded? Off unless MEASUREMENT_ENABLED and LOOP_ENABLED, and NEVER
 # for the loop's own `claude -p` (gardener/reviewer/miner + loop-adjacent harnesses) — they read every

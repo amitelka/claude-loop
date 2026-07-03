@@ -17,3 +17,4 @@ TAG_MINE_DONE="mine-skills: done"       # a mine run completed (stats: miner run
 TAG_MINE_FAILED="mine-skills: FAILED"   # a mine run hard-failed (stats: miner fails)
 TAG_REGRET="  regret "                  # gardener pruned a slug the reviewer later re-captured (stats: regret)
 TAG_INDEX_REBUILD="index rebuild"       # derived retriever index rebuilt on write (materialize/garden → build_index.py)
+TAG_LOOP_DISABLED="skip: LOOP_ENABLED=0" # an autonomous entry point no-op'd because LOOP_ENABLED=0 (kill switch)

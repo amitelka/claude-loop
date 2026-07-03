@@ -5,6 +5,7 @@
 # visible in `loopctl doctor`. A lock prevents the 03:00 run and a harvest catch-up from overlapping.
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || exit 1
+guard_loop_enabled garden   # kill switch: autonomous entry point no-ops when LOOP_ENABLED=0
 export LOOP_REVIEWER=1
 
 tag="${1:-scheduled}"   # "--catch-up" when invoked by harvest
