@@ -100,9 +100,10 @@ garden_actions() {  # $1=pre_rev $2=post_rev
 # ── Store integrity (gardener-hardening 2a): deterministic validation + auto-restore ────────────────
 # validate_store checks INTEGRITY only — the index is well-formed and nothing vanished unaccounted — NOT
 # JUDGMENT (whether a delete was wise; POLICY/regret own that). Both tiers, no model. Echoes a short reason
-# on FAILURE (rc 1); rc 0 = valid. $2 (pre_rev, optional) enables the interim drop tripwire (2b replaces it
-# with the gardener's declared-actions.json). Uses `git -C "$md"` so it is decoupled from the global store.
-validate_store() {  # $1=memdir  $2=pre_rev(optional)
+# on FAILURE (rc 1); rc 0 = valid. $2 (pre_rev) + $3 (declared-actions.json) enable the drop check: every
+# dropped slug must be DECLARED (fail-closed), within the volume ceiling, and no rule-typed drop. Uses
+# `git -C "$md"` so it is decoupled from the global store.
+validate_store() {  # $1=memdir  $2=pre_rev(optional)  $3=declared-actions.json(optional)
   local md="$1" pre="${2:-}" hot cold f slug n refs dup line IFS=$' \t\n'   # local IFS: contain the bash-3.2 while-IFS-read leak
   hot="$md/MEMORY.md"; cold="$md/ARCHIVE.md"
   # (a) both index files present, non-empty, with ≥1 entry — catches a deleted/truncated index (empty-glob class)
@@ -129,18 +130,36 @@ validate_store() {  # $1=memdir  $2=pre_rev(optional)
     case "$slug" in MEMORY|ARCHIVE) continue;; esac
     printf '%s\n' "$refs" | grep -qxF "$slug" || { echo "dangling-file:$slug"; return 1; }
   done < <(find "$md" -maxdepth 1 -name '*.md' 2>/dev/null)
-  # (3) DROP tripwire — INTERIM until 2b's declared-actions intent contract. Compares the pre→post slug set.
+  # (3) DROP CHECK — declared-actions intent contract (2b) + volume ceiling + rule-drop rail. Only when a
+  # pre_rev is given AND something actually vanished (zero drops → nothing to check; a missing declared file
+  # is only meaningful when a memory disappeared). Three independent gates on the pre→post slug set:
+  #   • CEILING (GARDEN_MAX_DROPS): bounds per-run blast radius even for DECLARED drops — the declaring party
+  #     is the same LLM we guard, so declared-actions validates ACCOUNTING, not restraint. Operator-raisable.
+  #   • INTENT (observed ⊆ declared, $3): every dropped slug must appear in the declared-actions.json. Undeclared
+  #     vanish = FAIL, FAIL-CLOSED (no/empty file → every drop undeclared). Declared-not-observed = harmless WARN.
+  #   • RULE RAIL (F1): a dropped user|feedback memory is a hard FAIL regardless of declaration — rules leave the
+  #     store only UPWARD by human graduation, never by a garden action.
   if [ -n "$pre" ] && git -C "$md" cat-file -e "$pre" 2>/dev/null; then
-    local pre_slugs drops nd rt
+    local pre_slugs drops nd rt declared="${3:-}" decl
     pre_slugs="$(git -C "$md" show "$pre:MEMORY.md" "$pre:ARCHIVE.md" 2>/dev/null | grep -oE '^- \[[^]]*\]\([^)]*\.md\)' | sed -E 's/.*\(([^)]*)\.md\)$/\1/' | LC_ALL=C sort -u)"
     drops="$(comm -23 <(printf '%s\n' "$pre_slugs") <(printf '%s\n' "$refs" | LC_ALL=C sort -u) | grep -v '^$')"
     nd="$(printf '%s\n' "$drops" | grep -c .)"
-    [ "${nd:-0}" -gt "${GARDEN_MAX_DROPS:-3}" ] && { echo "too-many-drops:$nd>${GARDEN_MAX_DROPS:-3}"; return 1; }
-    while IFS= read -r slug; do   # newline-safe iteration
-      [ -n "$slug" ] || continue
-      rt="$(git -C "$md" show "$pre:$slug.md" 2>/dev/null | sed -n 's/^[[:space:]]*type:[[:space:]]*//p' | head -1)"
-      case "$rt" in user|feedback) echo "rule-typed-drop:$slug($rt)"; return 1;; esac
-    done <<< "$drops"
+    if [ "${nd:-0}" -gt 0 ]; then
+      [ "${nd:-0}" -gt "${GARDEN_MAX_DROPS:-3}" ] && { echo "too-many-drops:$nd>${GARDEN_MAX_DROPS:-3}"; return 1; }
+      decl="$([ -n "$declared" ] && jq -r '.[]?.slug // empty' "$declared" 2>/dev/null | LC_ALL=C sort -u)"
+      while IFS= read -r slug; do   # newline-safe iteration
+        [ -n "$slug" ] || continue
+        printf '%s\n' "$decl" | grep -qxF "$slug" || { echo "undeclared-drop:$slug"; return 1; }
+        rt="$(git -C "$md" show "$pre:$slug.md" 2>/dev/null | sed -n 's/^[[:space:]]*type:[[:space:]]*//p' | head -1)"
+        case "$rt" in user|feedback) echo "rule-typed-drop:$slug($rt)"; return 1;; esac
+      done <<< "$drops"
+      if [ -n "$decl" ]; then   # declared-but-not-observed → harmless WARN (said it would delete X, didn't)
+        while IFS= read -r slug; do
+          [ -n "$slug" ] || continue
+          printf '%s\n' "$drops" | grep -qxF "$slug" || log "store-validate: declared-not-observed $slug (WARN)"
+        done <<< "$decl"
+      fi
+    fi
   fi
   return 0
 }

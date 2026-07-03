@@ -16,9 +16,10 @@ REVIEWER_EFFORT=high
 # ── Gardener (daily maintenance) ──────────────────────────────────────────────
 GARDENER_MODEL=opus
 GARDENER_EFFORT=xhigh
-GARDEN_MAX_DROPS=3     # INTERIM drop tripwire (until 2b's declared-actions): a garden run dropping >N memories
-                       # on an otherwise-clean exit auto-restores. Normal gardens delete 0–3 (merges); raise
-                       # this for a deliberate big cleanup, then run.
+GARDEN_MAX_DROPS=3     # Volume ceiling on garden drops — COMPLEMENTS the declared-actions intent contract (2b):
+                       # declared-actions validates ACCOUNTING (every drop declared); the ceiling bounds per-run
+                       # blast radius even for DECLARED drops (the declaring party is the same LLM we guard).
+                       # Normal gardens delete 0–3 (merges); raise this for a deliberate big cleanup, then run.
 
 # ── Skill miner (cross-corpus skill/patch proposer; manual or scheduled) ──────
 SKILL_MINER_ENABLED=0          # 0 = no scheduled run; install-schedule skips it. Enable per machine.

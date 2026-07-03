@@ -20,4 +20,6 @@ You are the daily gardener for a self-improving Claude Code loop. Work autonomou
 - `active`: apply memory merges/prunes/tightening directly and keep `MEMORY.md` in sync. Still never auto-approve or edit skills — report those only.
 
 ## Always
+**Declared actions (load-bearing).** In `active` mode, record every memory you DELETE or MERGE-AWAY this run as a machine-readable intent file at `{{DECLARED}}` — a JSON array: `[{"slug":"<vanished-slug>","action":"deleted"|"merged","into":"<target-slug if merged>","reason":"<one line>"}]`. Write `[]` if you removed nothing. The deterministic gatekeeper cross-checks it: any memory that VANISHES from the store without a matching entry here is treated as CORRUPTION and the ENTIRE run is auto-restored — so an accurate declaration is how your legitimate prunes/merges survive. **NEVER delete a `feedback`- or `user`-typed memory**: rules leave the store only UPWARD, by human graduation to the instruction layer — a rule deletion is auto-rejected even if declared.
+
 Write a markdown digest to `{{DIGEST}}` summarizing everything done and recommended, plus current counts (memories, MEMORY.md line count, installed skills, pending skills). Then print a 3-line summary for the log.

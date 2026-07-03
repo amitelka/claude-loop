@@ -14,6 +14,7 @@ trap 'release_store_lock' EXIT
 
 stamp="$(date '+%Y-%m-%d')"
 digest="$LOOP_DIR/log/garden-$stamp.md"
+declared="$LOOP_DIR/log/garden-declared-$stamp.json"   # gardener's machine-readable intent record (2b)
 start="$(date +%s)"
 
 prompt="$(cat "$LOOP_DIR/prompts/garden.md")"
@@ -24,11 +25,13 @@ prompt="${prompt//'{{MEMORY_DIR}}'/$MEMORY_DIR}"
 prompt="${prompt//'{{SKILLS_DIR}}'/$SKILLS_DIR}"
 prompt="${prompt//'{{PENDING_SKILLS}}'/$PENDING_SKILLS}"
 prompt="${prompt//'{{DIGEST}}'/$digest}"
+prompt="${prompt//'{{DECLARED}}'/$declared}"
 prompt="${prompt//'{{MAX_LINES}}'/$MEMORY_INDEX_MAX_LINES}"
 
 log "garden: start mode=$LOOP_MODE model=$GARDENER_MODEL ($tag)"
 mem_snapshot "pre-garden"   # rollback point before the gardener edits memory-global
 pre_rev="$(mem_git rev-parse HEAD 2>/dev/null)"   # for the garden-actions sidecar (diff vs post)
+rm -f "$declared"   # F3: a stale declared file from a prior same-day run must never justify today's drops
 raw="$(printf '%s' "$prompt" | claude -p \
   --model "$GARDENER_MODEL" \
   --effort "$GARDENER_EFFORT" \
@@ -59,7 +62,7 @@ fi
 # Content-integrity gate (validate-THEN-commit): even a clean-exit gardener can mangle the index or drop
 # memories. Validate the WORKING TREE against pre-garden BEFORE committing; a failure joins the rc/api/digest
 # failure path → auto-restore, never committing a partial mutation as HEAD (the manual-rollback trap).
-[ "$ok" = 1 ] && { vreason="$(validate_store "$MEMORY_DIR" "$pre_rev")" || { ok=0; reason="${reason:+$reason,}validate:$vreason"; }; }
+[ "$ok" = 1 ] && { vreason="$(validate_store "$MEMORY_DIR" "$pre_rev" "$declared")" || { ok=0; reason="${reason:+$reason,}validate:$vreason"; }; }
 
 if [ "$ok" = 1 ]; then
   mem_snapshot "post-garden"
