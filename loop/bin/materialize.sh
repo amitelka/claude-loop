@@ -62,7 +62,16 @@ for ((i=0; i<mlen && i<3; i++)); do
 done
 
 if [ "$wrote_active" = 1 ]; then
-  mem_snapshot "post-materialize-$session"
-  rebuild_mem_index "materialize $session"   # derived retriever index; stale index self-heals next write
+  # Post-write integrity gate (2a): a deterministic append shouldn't corrupt the index, but assert it — on
+  # failure, do NOT commit; restore to pre-materialize and quarantine the proposal (doctor-visible tag).
+  if vreason="$(validate_store "$MEMORY_DIR")"; then
+    mem_snapshot "post-materialize-$session"
+    rebuild_mem_index "materialize $session"   # derived retriever index; stale index self-heals next write
+  else
+    q="$PENDING_MEM/quarantine-$session-$(date +%s)"; mkdir -p "$PENDING_MEM"
+    cp "$P" "$q.json" 2>/dev/null; printf 'validate:%s\nsession:%s\n' "$vreason" "$session" > "$q.reason"
+    mem_restore_to "$(mem_git rev-parse HEAD 2>/dev/null)" "$(dirname "$LOG")/materialize-FAILED-$session.patch"
+    log "materialize: quarantine $session (validate:$vreason) — write reverted, proposal saved to ${q#$HOME/}.json"
+  fi
 fi
 log "materialize: $session done mem(+$acc_m/-$rej_m) mode=$LOOP_MODE"

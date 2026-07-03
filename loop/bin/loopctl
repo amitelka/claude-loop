@@ -145,6 +145,7 @@ PLIST
     mem_snapshot "pre-rollback"
     mem_git checkout "$ref" -- . && { log "rollback: memory-global -> $ref"; rebuild_mem_index "rollback"; echo "memory-global restored to $ref (prior state saved as a snapshot first)"; };;
   reindex) rebuild_mem_index "manual reindex"; echo "derived retriever index rebuilt (mem-index.json)";;
+  verify-store) r="$(validate_store "$MEMORY_DIR")" && echo "store OK (index format + orphan/dangling, both tiers)" || { echo "store INVALID: $r"; exit 1; };;
   doctor)
     okx(){ echo "  ✓ $1"; }; wrn(){ echo "  ⚠ $1"; }
     echo "── loop doctor ──"
@@ -162,6 +163,7 @@ PLIST
     if [ ! -f "$idx" ]; then wrn "mem-index.json missing — retriever scores an empty corpus (loopctl reindex)"
     elif [ -n "$(find "$MEMORY_DIR" -name '*.md' -newer "$idx" 2>/dev/null | head -1)" ]; then wrn "mem-index.json stale — a memory changed since last build (loopctl reindex)"
     else okx "mem-index.json fresh"; fi
+    vr="$(validate_store "$MEMORY_DIR")" && okx "store integrity ok" || wrn "store INVALID: $vr (loopctl verify-store)"
     now="$(date +%s)"; sl=""
     for lk in "$STATE_DIR"/*.lock; do
       [ -d "$lk" ] || continue
@@ -222,5 +224,5 @@ PTR
       fi
     done
     ;;
-  *) echo "usage: loopctl {status|stats|skill-stats|mine-skills [--dry-run]|skill-curate|skill-snapshot|skill-rollback <ref>|doctor|enable|disable|mode dry-run|active|review-now|snapshot|rollback <ref>|mem-log|mem-diff|share-memory|install-schedule|uninstall-schedule|token}";;
+  *) echo "usage: loopctl {status|stats|skill-stats|mine-skills [--dry-run]|skill-curate|skill-snapshot|skill-rollback <ref>|doctor|enable|disable|mode dry-run|active|review-now|snapshot|rollback <ref>|mem-log|mem-diff|reindex|verify-store|share-memory|install-schedule|uninstall-schedule|token}";;
 esac

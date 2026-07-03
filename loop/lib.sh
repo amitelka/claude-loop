@@ -97,6 +97,71 @@ garden_actions() {  # $1=pre_rev $2=post_rev
   } >> "$STATE_DIR/garden-actions.jsonl" 2>/dev/null
 }
 
+# ── Store integrity (gardener-hardening 2a): deterministic validation + auto-restore ────────────────
+# validate_store checks INTEGRITY only — the index is well-formed and nothing vanished unaccounted — NOT
+# JUDGMENT (whether a delete was wise; POLICY/regret own that). Both tiers, no model. Echoes a short reason
+# on FAILURE (rc 1); rc 0 = valid. $2 (pre_rev, optional) enables the interim drop tripwire (2b replaces it
+# with the gardener's declared-actions.json). Uses `git -C "$md"` so it is decoupled from the global store.
+validate_store() {  # $1=memdir  $2=pre_rev(optional)
+  local md="$1" pre="${2:-}" hot cold f slug n refs dup line IFS=$' \t\n'   # local IFS: contain the bash-3.2 while-IFS-read leak
+  hot="$md/MEMORY.md"; cold="$md/ARCHIVE.md"
+  # (a) both index files present, non-empty, with ≥1 entry — catches a deleted/truncated index (empty-glob class)
+  for f in "$hot" "$cold"; do
+    [ -f "$f" ] || { echo "missing-index:${f##*/}"; return 1; }
+    [ -s "$f" ] || { echo "empty-index:${f##*/}"; return 1; }
+    grep -qE '^- \[' "$f" || { echo "no-entries:${f##*/}"; return 1; }
+  done
+  # (1) FORMAT: each '- [' entry line is exactly ONE well-formed entry head → catches merged/mangled lines.
+  # Robust to brackets/parens/em-dashes in a description (a legal desc lacks a full '- [..](..md)' head).
+  while IFS= read -r line; do
+    n="$(printf '%s' "$line" | grep -oE -- '- \[[^]]*\]\([^)]*\.md\)' | wc -l | tr -d ' ')"
+    [ "$n" = 1 ] || { echo "malformed-entry:${line:0:48}"; return 1; }
+  done < <(grep -hE '^- \[' "$hot" "$cold" 2>/dev/null)
+  # (2) ORPHAN: every referenced slug has a file. DANGLING/DUP: every memory file is in exactly one index line.
+  refs="$(grep -hoE '^- \[[^]]*\]\([^)]*\.md\)' "$hot" "$cold" 2>/dev/null | sed -E 's/.*\(([^)]*)\.md\)$/\1/' | LC_ALL=C sort)"
+  while IFS= read -r slug; do   # newline-safe (do NOT rely on $refs word-splitting — IFS state varies)
+    [ -n "$slug" ] || continue
+    [ -f "$md/$slug.md" ] || { echo "orphan-index:$slug"; return 1; }
+  done <<< "$refs"
+  dup="$(printf '%s\n' "$refs" | uniq -d | head -1)"; [ -n "$dup" ] && { echo "dup-index:$dup"; return 1; }
+  while IFS= read -r f; do
+    slug="${f##*/}"; slug="${slug%.md}"
+    case "$slug" in MEMORY|ARCHIVE) continue;; esac
+    printf '%s\n' "$refs" | grep -qxF "$slug" || { echo "dangling-file:$slug"; return 1; }
+  done < <(find "$md" -maxdepth 1 -name '*.md' 2>/dev/null)
+  # (3) DROP tripwire — INTERIM until 2b's declared-actions intent contract. Compares the pre→post slug set.
+  if [ -n "$pre" ] && git -C "$md" cat-file -e "$pre" 2>/dev/null; then
+    local pre_slugs drops nd rt
+    pre_slugs="$(git -C "$md" show "$pre:MEMORY.md" "$pre:ARCHIVE.md" 2>/dev/null | grep -oE '^- \[[^]]*\]\([^)]*\.md\)' | sed -E 's/.*\(([^)]*)\.md\)$/\1/' | LC_ALL=C sort -u)"
+    drops="$(comm -23 <(printf '%s\n' "$pre_slugs") <(printf '%s\n' "$refs" | LC_ALL=C sort -u) | grep -v '^$')"
+    nd="$(printf '%s\n' "$drops" | grep -c .)"
+    [ "${nd:-0}" -gt "${GARDEN_MAX_DROPS:-3}" ] && { echo "too-many-drops:$nd>${GARDEN_MAX_DROPS:-3}"; return 1; }
+    while IFS= read -r slug; do   # newline-safe iteration
+      [ -n "$slug" ] || continue
+      rt="$(git -C "$md" show "$pre:$slug.md" 2>/dev/null | sed -n 's/^[[:space:]]*type:[[:space:]]*//p' | head -1)"
+      case "$rt" in user|feedback) echo "rule-typed-drop:$slug($rt)"; return 1;; esac
+    done <<< "$drops"
+  fi
+  return 0
+}
+
+# Discard the memory-global working tree back to a committed snapshot, leaving NO untracked orphans, after
+# dumping a forensic patch (tracked diff vs pre + untracked bodies). Used by garden.sh + materialize.sh on a
+# failed/invalid run so corruption is NEVER committed as HEAD (the manual-rollback trap). reset --hard also
+# covers a gardener that committed mid-run. $1=pre_rev $2=forensic patch path.
+mem_restore_to() {
+  local pre="$1" patch="${2:-/dev/null}" u IFS=$' \t\n'   # local IFS: contain the bash-3.2 while-IFS-read leak
+  { mem_git diff "$pre" 2>/dev/null
+    mem_git ls-files --others --exclude-standard 2>/dev/null | while IFS= read -r u; do
+      printf '\n=== untracked: %s ===\n' "$u"; cat "$MEMORY_DIR/$u" 2>/dev/null
+    done
+  } > "$patch" 2>/dev/null
+  mem_git reset --hard "$pre" >/dev/null 2>&1     # HEAD+index+tree → pre (discards a gardener commit too)
+  mem_git clean -fd >/dev/null 2>&1               # remove untracked survivors (NOT -x — keep gitignored)
+  rebuild_mem_index "restore"
+  log "store-restore: reset to $pre (forensic: ${patch#$HOME/})"
+}
+
 # Counts over a RAW JSONL slice on stdin.
 count_tools() { jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use") | .id' 2>/dev/null | wc -l | tr -d ' '; }
 count_turns() { jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="text")    | "x"' 2>/dev/null | wc -l | tr -d ' '; }

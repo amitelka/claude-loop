@@ -56,6 +56,11 @@ fi
 [ -s "$digest" ]                || { ok=0; reason="${reason:+$reason,}no-digest"; }
 [ "${dmtime:-0}" -ge "$start" ] || { ok=0; reason="${reason:+$reason,}stale-digest"; }
 
+# Content-integrity gate (validate-THEN-commit): even a clean-exit gardener can mangle the index or drop
+# memories. Validate the WORKING TREE against pre-garden BEFORE committing; a failure joins the rc/api/digest
+# failure path → auto-restore, never committing a partial mutation as HEAD (the manual-rollback trap).
+[ "$ok" = 1 ] && { vreason="$(validate_store "$MEMORY_DIR" "$pre_rev")" || { ok=0; reason="${reason:+$reason,}validate:$vreason"; }; }
+
 if [ "$ok" = 1 ]; then
   mem_snapshot "post-garden"
   garden_actions "$pre_rev" "$(mem_git rev-parse HEAD 2>/dev/null)"   # deterministic prune/merge/trim sidecar
@@ -63,7 +68,7 @@ if [ "$ok" = 1 ]; then
   rebuild_mem_index "garden"   # derived retriever index; stale index self-heals next write
   log "garden: done (ok) cost=${cost:-?} -> $digest"
 else
-  mem_snapshot "post-garden-FAILED"   # truthful label; pre-garden snapshot remains the rollback point
+  mem_restore_to "$pre_rev" "$(dirname "$LOG")/garden-FAILED-$stamp.patch"   # discard corrupt tree → HEAD stays clean at pre-garden
   printf '%s|%s' "$(date +%s)" "$reason" > "$STATE_DIR/garden.fail"
-  log "garden: FAILED ($reason) cost=${cost:-?} — not marking success; harvest will retry when awake"
+  log "garden: FAILED ($reason) cost=${cost:-?} — restored to pre-garden; harvest will retry when awake"
 fi

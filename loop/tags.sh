@@ -18,3 +18,5 @@ TAG_MINE_FAILED="mine-skills: FAILED"   # a mine run hard-failed (stats: miner f
 TAG_REGRET="  regret "                  # gardener pruned a slug the reviewer later re-captured (stats: regret)
 TAG_INDEX_REBUILD="index rebuild"       # derived retriever index rebuilt on write (materialize/garden → build_index.py)
 TAG_LOOP_DISABLED="skip: LOOP_ENABLED=0" # an autonomous entry point no-op'd because LOOP_ENABLED=0 (kill switch)
+TAG_STORE_RESTORE="store-restore"        # garden/materialize auto-restored the store after a failed/invalid run (2a)
+TAG_MATERIALIZE_QUARANTINE="materialize: quarantine" # a materialize write failed the integrity gate → reverted + quarantined
