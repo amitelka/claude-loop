@@ -4,6 +4,7 @@
 # filtered. Fast path-prefix bail on non-memory reads so it doesn't tax every Read. Never blocks; exit 0.
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || exit 0
+loop_enabled || exit 0   # kill switch: LOOP_ENABLED=0 → fully inert (measure_on also gates it; explicit + uniform)
 measure_on || exit 0
 input="$(cat 2>/dev/null)"
 printf '%s' "$input" | grep -qF "$MEMORY_DIR" || exit 0          # fast bail: non-memory read, skip the jq

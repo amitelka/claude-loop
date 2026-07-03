@@ -105,6 +105,7 @@ garden_actions() {  # $1=pre_rev $2=post_rev
 # `git -C "$md"` so it is decoupled from the global store.
 validate_store() {  # $1=memdir  $2=pre_rev(optional)  $3=declared-actions.json(optional)
   local md="$1" pre="${2:-}" hot cold f slug n refs dup line IFS=$' \t\n'   # local IFS: contain the bash-3.2 while-IFS-read leak
+  local kebab='^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'   # P0: index targets must be LOCAL kebab slugs (materialize's rule) — no traversal/subdir/absolute
   hot="$md/MEMORY.md"; cold="$md/ARCHIVE.md"
   # (a) both index files present, non-empty, with ≥1 entry — catches a deleted/truncated index (empty-glob class)
   for f in "$hot" "$cold"; do
@@ -122,6 +123,7 @@ validate_store() {  # $1=memdir  $2=pre_rev(optional)  $3=declared-actions.json(
   refs="$(grep -hoE '^- \[[^]]*\]\([^)]*\.md\)' "$hot" "$cold" 2>/dev/null | sed -E 's/.*\(([^)]*)\.md\)$/\1/' | LC_ALL=C sort)"
   while IFS= read -r slug; do   # newline-safe (do NOT rely on $refs word-splitting — IFS state varies)
     [ -n "$slug" ] || continue
+    [[ "$slug" =~ $kebab ]] || { echo "illegal-slug:$slug"; return 1; }   # P0: reject ../traversal, subdir/x, absolute, illegal chars BEFORE touching the FS
     [ -f "$md/$slug.md" ] || { echo "orphan-index:$slug"; return 1; }
   done <<< "$refs"
   dup="$(printf '%s\n' "$refs" | uniq -d | head -1)"; [ -n "$dup" ] && { echo "dup-index:$dup"; return 1; }
@@ -146,7 +148,12 @@ validate_store() {  # $1=memdir  $2=pre_rev(optional)  $3=declared-actions.json(
     nd="$(printf '%s\n' "$drops" | grep -c .)"
     if [ "${nd:-0}" -gt 0 ]; then
       [ "${nd:-0}" -gt "${GARDEN_MAX_DROPS:-3}" ] && { echo "too-many-drops:$nd>${GARDEN_MAX_DROPS:-3}"; return 1; }
-      decl="$([ -n "$declared" ] && jq -r '.[]?.slug // empty' "$declared" 2>/dev/null | LC_ALL=C sort -u)"
+      # declared-actions SCHEMA enforcement (P1): top-level array; each entry slug∈kebab, action∈{deleted,merged},
+      # `into` (kebab) required when merged. Malformed / non-array / invalid entry ⇒ treat file as MISSING (fail-closed per F3).
+      decl=""
+      if [ -n "$declared" ] && jq -e 'if type=="array" then all(.[]; ((.slug|type)=="string" and (.slug|test("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"))) and (.action=="deleted" or .action=="merged") and (.action!="merged" or ((.into|type)=="string" and (.into|test("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"))))) else false end' "$declared" >/dev/null 2>&1; then
+        decl="$(jq -r '.[].slug' "$declared" 2>/dev/null | LC_ALL=C sort -u)"
+      fi
       while IFS= read -r slug; do   # newline-safe iteration
         [ -n "$slug" ] || continue
         printf '%s\n' "$decl" | grep -qxF "$slug" || { echo "undeclared-drop:$slug"; return 1; }

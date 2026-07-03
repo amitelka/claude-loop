@@ -87,4 +87,17 @@ o="$(schedule_doctor_verdict 1 1)"; ec=$?; ok "$ec" 1 "2×2 enabled+absent → w
 o="$(schedule_doctor_verdict 0 0)"; ec=$?; ok "$ec" 0 "2×2 disabled+absent → coherent (ok)"; ok "$(has "$o" "coherent")" yes "  msg: coherent"
 o="$(schedule_doctor_verdict 0 2)"; ec=$?; ok "$ec" 1 "2×2 disabled+loaded → warn"; ok "$(has "$o" "no-op")" yes "  msg: scheduled runs no-op"
 
+# ── Part 4 — disabled HOOKS are fully inert: zero stdout + zero STATE_DIR writes (xhigh P1, full-inert ruling) ──
+echo "── Part 4: disabled hooks fully inert ──"
+set_enabled 0
+hin='{"session_id":"s1","prompt_id":"p1","tool_name":"Read","tool_input":{"file_path":"'"$P_MEM"'/x.md","skill":"foo"},"hook_event_name":"PostToolUse","cwd":"'"$tmp"'"}'
+for h in on-precompact on-read on-session-start on-skill-use on-stop on-session-end; do
+  s0="$(state_sig)"; out="$(printf '%s' "$hin" | bash "$L/hooks/$h.sh" 2>/dev/null)"
+  ok "${out:-EMPTY}" EMPTY "$h: zero stdout when disabled"
+  ok "$(state_sig)" "$s0" "$h: zero STATE_DIR writes when disabled"
+done
+s0="$(state_sig)"; out="$(printf '%s' "$hin" | bash "$L/bin/gate-runner.sh" prompt-submit 2>/dev/null)"
+ok "${out:-EMPTY}" EMPTY "gate-runner: zero stdout when disabled"
+ok "$(state_sig)" "$s0" "gate-runner: zero STATE_DIR writes when disabled"
+
 exit "$rc"

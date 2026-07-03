@@ -6,6 +6,7 @@ set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || exit 0
 
 cat > /dev/null 2>&1                                     # drain stdin
+loop_enabled || exit 0   # kill switch: LOOP_ENABLED=0 → surface nothing, advance no marker (pending stays silent until re-enable — intended)
 [ -n "${LOOP_REVIEWER:-}" ] && exit 0   # loop-internal claude -p opt-out (NOT CLAUDE_CODE_CHILD_SESSION — set on normal sessions here; see on-stop.sh)
 
 maybe_selfheal_async   # fresh-launch self-heal (garden+miner); the Stop hook covers already-open sessions

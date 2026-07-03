@@ -12,10 +12,11 @@ tag="${1:-scheduled}"   # "--catch-up" when invoked by harvest
 acquire_store_lock "garden-$tag" || { log "garden: memory store busy (garden/miner running) — skip ($tag)"; exit 0; }
 trap 'release_store_lock' EXIT
 
-stamp="$(date '+%Y-%m-%d')"
-digest="$LOOP_DIR/log/garden-$stamp.md"
-declared="$LOOP_DIR/log/garden-declared-$stamp.json"   # gardener's machine-readable intent record (2b)
-start="$(date +%s)"
+stamp="$(date '+%Y-%m-%d')"; run_id="$(date +%s)"   # run-scoped ids — two gardens in ONE day must not overwrite each other's forensics
+digest="$LOOP_DIR/log/garden-$stamp-$run_id.md"
+declared="$LOOP_DIR/log/garden-declared-$stamp-$run_id.json"   # gardener's machine-readable intent record (2b)
+patch="$LOOP_DIR/log/garden-FAILED-$stamp-$run_id.patch"       # forensic artifact on a failed/invalid run
+start="$run_id"
 
 prompt="$(cat "$LOOP_DIR/prompts/garden.md")"
 policy="$(cat "$LOOP_DIR/POLICY.md" 2>/dev/null)"   # single source; both prompts interpolate it (no doc↔prompt drift)
@@ -31,7 +32,7 @@ prompt="${prompt//'{{MAX_LINES}}'/$MEMORY_INDEX_MAX_LINES}"
 log "garden: start mode=$LOOP_MODE model=$GARDENER_MODEL ($tag)"
 mem_snapshot "pre-garden"   # rollback point before the gardener edits memory-global
 pre_rev="$(mem_git rev-parse HEAD 2>/dev/null)"   # for the garden-actions sidecar (diff vs post)
-rm -f "$declared"   # F3: a stale declared file from a prior same-day run must never justify today's drops
+rm -f "$digest" "$declared"   # F3 + P2: fresh per-run artifacts; a stale declared file must never justify today's drops
 raw="$(printf '%s' "$prompt" | claude -p \
   --model "$GARDENER_MODEL" \
   --effort "$GARDENER_EFFORT" \
@@ -71,7 +72,8 @@ if [ "$ok" = 1 ]; then
   rebuild_mem_index "garden"   # derived retriever index; stale index self-heals next write
   log "garden: done (ok) cost=${cost:-?} -> $digest"
 else
-  mem_restore_to "$pre_rev" "$(dirname "$LOG")/garden-FAILED-$stamp.patch"   # discard corrupt tree → HEAD stays clean at pre-garden
+  mem_restore_to "$pre_rev" "$patch"   # discard corrupt tree → HEAD stays clean at pre-garden
+  [ -f "$declared" ] && { printf '\n=== declared-actions.json (this failed run) ===\n'; cat "$declared"; } >> "$patch" 2>/dev/null   # P2: fold the run's declared intent into the forensic bundle
   printf '%s|%s' "$(date +%s)" "$reason" > "$STATE_DIR/garden.fail"
   log "garden: FAILED ($reason) cost=${cost:-?} — restored to pre-garden; harvest will retry when awake"
 fi

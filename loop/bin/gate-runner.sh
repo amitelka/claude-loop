@@ -7,6 +7,7 @@
 # !LOOP_REVIEWER). Invoked by each hook as: gate-runner.sh <gate-name>, hook JSON on stdin.
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || exit 0
+loop_enabled || exit 0   # kill switch: LOOP_ENABLED=0 → fully inert (measure_on also gates it; explicit + uniform)
 measure_on || exit 0
 gate="${1:-}"; [ -n "$gate" ] || exit 0
 input="$(cat 2>/dev/null)"

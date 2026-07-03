@@ -26,9 +26,9 @@ build_store(){
   rm -rf "$memdir"; mkdir -p "$memdir"
   local s
   for s in h1 h2 h3 h4; do printf -- '---\nname: %s\nmetadata:\n  type: feedback\n---\nbody of %s\n' "$s" "$s" > "$memdir/$s.md"; done
-  for s in c1 c2 c3 c4; do printf -- '---\nname: %s\nmetadata:\n  type: reference\n---\nbody of %s\n' "$s" "$s" > "$memdir/$s.md"; done
+  for s in c1 c2 c3 c4 c5 c6; do printf -- '---\nname: %s\nmetadata:\n  type: reference\n---\nbody of %s\n' "$s" "$s" > "$memdir/$s.md"; done
   { echo "# Memory Index"; echo; for s in h1 h2 h3 h4; do echo "- [$s]($s.md) — desc $s"; done; } > "$memdir/MEMORY.md"
-  { echo "# Memory Archive"; echo; for s in c1 c2 c3 c4; do echo "- [$s]($s.md) — desc $s"; done; } > "$memdir/ARCHIVE.md"
+  { echo "# Memory Archive"; echo; for s in c1 c2 c3 c4 c5 c6; do echo "- [$s]($s.md) — desc $s"; done; } > "$memdir/ARCHIVE.md"
   git -C "$memdir" init -q; git -C "$memdir" -c user.email=t@t -c user.name=t add -A
   git -C "$memdir" -c user.email=t@t -c user.name=t commit -q -m base
 }
@@ -74,21 +74,42 @@ build_store; pre="$(mhead)"; drop_slug c1
   ok "$(vr "$pre" "$(mkdecl '[{"slug":"c1","action":"deleted"},{"slug":"c2","action":"deleted"}]')" >/dev/null; echo $?)" 0 "declared-but-not-observed (c2 declared, only c1 dropped) → PASS (harmless WARN)"
 build_store; pre="$(mhead)"
   ok "$(vr "$pre" >/dev/null; echo $?)" 0 "(F3) zero drops + no declared file → PASS"
+# ── P0: index target must be a LOCAL kebab slug (reject traversal/subdir/absolute/illegal) ──
+build_store; echo "- [evil](../evil.md) — traversal" >> "$memdir/MEMORY.md"; ok "$(has "$(vr)" illegal-slug)" yes "P0: ../traversal target → FAIL illegal-slug"
+build_store; echo "- [sub](subdir/x.md) — nested" >> "$memdir/MEMORY.md"; ok "$(has "$(vr)" illegal-slug)" yes "P0: subdir/x.md target → FAIL illegal-slug"
+build_store; echo "- [abs](/etc/shadow.md) — absolute" >> "$memdir/MEMORY.md"; ok "$(has "$(vr)" illegal-slug)" yes "P0: absolute-path target → FAIL illegal-slug"
+build_store; echo "- [Up](UpperCase.md) — illegal chars" >> "$memdir/MEMORY.md"; ok "$(has "$(vr)" illegal-slug)" yes "P0: uppercase/illegal target → FAIL illegal-slug"
+# ── isolated F2: 4 declared REFERENCE drops (no feedback confound) → ceiling fails on its own ──
+build_store; pre="$(mhead)"; drop_slug c1; drop_slug c2; drop_slug c3; drop_slug c4   # c5,c6 keep cold non-empty
+  ok "$(has "$(vr "$pre" "$(mkdecl '[{"slug":"c1"},{"slug":"c2"},{"slug":"c3"},{"slug":"c4"}]')")" too-many-drops)" yes "isolated F2: 4 declared reference drops → ceiling FAIL (no rule-type confound)"
+# ── non-drops must PASS: tier-move (slug persists across tiers) + title rename (slug/file unchanged) ──
+build_store; pre="$(mhead)"; grep -v '(c1.md)' "$memdir/ARCHIVE.md" > "$memdir/.a" && mv "$memdir/.a" "$memdir/ARCHIVE.md"; echo "- [c1](c1.md) — promoted" >> "$memdir/MEMORY.md"
+  ok "$(vr "$pre" >/dev/null; echo $?)" 0 "tier-move (c1 cold→hot, slug persists) → PASS (not a drop)"
+build_store; pre="$(mhead)"; { echo "# Memory Index"; echo; echo "- [h1 renamed title](h1.md) — desc h1"; for s in h2 h3 h4; do echo "- [$s]($s.md) — desc $s"; done; } > "$memdir/MEMORY.md"
+  ok "$(vr "$pre" >/dev/null; echo $?)" 0 "title rename (slug/file unchanged) → PASS (not a drop)"
+# ── declared-actions SCHEMA: malformed / invalid ⇒ treat as MISSING (fail-closed → undeclared drop) ──
+build_store; pre="$(mhead)"; drop_slug c1; ok "$(has "$(vr "$pre" "$(mkdecl '[{"slug":"c1","action":"kept"}]')")" undeclared-drop)" yes "schema: invalid action → fail-closed → FAIL undeclared"
+build_store; pre="$(mhead)"; drop_slug c1; ok "$(has "$(vr "$pre" "$(mkdecl '{not json')")" undeclared-drop)" yes "schema: malformed JSON → fail-closed → FAIL undeclared"
+build_store; pre="$(mhead)"; drop_slug c1; ok "$(has "$(vr "$pre" "$(mkdecl '{"slug":"c1","action":"deleted"}')")" undeclared-drop)" yes "schema: non-array object → fail-closed → FAIL undeclared"
+build_store; pre="$(mhead)"; drop_slug c1; ok "$(has "$(vr "$pre" "$(mkdecl '[{"slug":"c1","action":"merged"}]')")" undeclared-drop)" yes "schema: merged without into → fail-closed → FAIL undeclared"
 
 # ═══ PART 2 — INTEGRATION: garden.sh drives a stubbed gardener ═══
 echo "── Part 2: garden.sh validate-then-commit / auto-restore ──"
 sbin="$tmp/stubbin"; mkdir -p "$sbin"
 cat > "$sbin/claude" <<'STUB'
 #!/usr/bin/env bash
-cat >/dev/null   # consume the prompt
-store="$CLAUDE_CONFIG_DIR/memory-global"; digest="$CLAUDE_CONFIG_DIR/loop/log/garden-$(date +%Y-%m-%d).md"
+prompt="$(cat)"   # the interpolated garden prompt carries the RUN-SCOPED digest + declared paths (like the real gardener)
+store="$CLAUDE_CONFIG_DIR/memory-global"
+digest="$(printf '%s' "$prompt" | tr '`' '\n' | grep -oE '^/[^ ]*garden-[0-9][0-9-]*\.md$' | head -1)"
+declared="$(printf '%s' "$prompt" | tr '`' '\n' | grep -oE '^/[^ ]*garden-declared-[0-9][0-9-]*\.json$' | head -1)"
+mangle(){ sed -i.bak '3s/$/ - [h2b](h2b.md) — merged/' "$store/MEMORY.md"; rm -f "$store/MEMORY.md.bak"; }   # append a 2nd entry-head to line 3
 case "${GARDEN_TEST_SCENARIO:-}" in
   clean)    printf '\nappended\n' >> "$store/h1.md"; echo done > "$digest"; echo '{"is_error":false,"total_cost_usd":0}'; exit 0;;
-  mangle)   m="$store/MEMORY.md"; { sed -n '3p' "$m" | tr -d '\n'; sed -n '4p' "$m"; } > /tmp/gm.$$; sed -i.bak '3,4d' "$m"; cat /tmp/gm.$$ >> "$m"; rm -f /tmp/gm.$$ "$m.bak"; echo done > "$digest"; echo '{"is_error":false}'; exit 0;;
-  untracked) printf -- '---\nname: orphan-new\n---\nx\n' > "$store/orphan-new.md"; m="$store/MEMORY.md"; { sed -n '3p' "$m" | tr -d '\n'; sed -n '4p' "$m"; } > /tmp/gu.$$; sed -i.bak '3,4d' "$m"; cat /tmp/gu.$$ >> "$m"; rm -f /tmp/gu.$$ "$m.bak"; echo done > "$digest"; echo '{"is_error":false}'; exit 0;;
+  mangle)   mangle; echo done > "$digest"; echo '{"is_error":false}'; exit 0;;
+  untracked) printf -- '---\nname: orphan-new\n---\nx\n' > "$store/orphan-new.md"; mangle; echo done > "$digest"; echo '{"is_error":false}'; exit 0;;
   rcfail)   echo "boom" >&2; exit 1;;
   drop-undeclared) rm -f "$store/c1.md"; grep -v '(c1.md)' "$store/ARCHIVE.md" > "$store/.a" && mv "$store/.a" "$store/ARCHIVE.md"; echo done > "$digest"; echo '{"is_error":false}'; exit 0;;
-  drop-declared)   rm -f "$store/c1.md"; grep -v '(c1.md)' "$store/ARCHIVE.md" > "$store/.a" && mv "$store/.a" "$store/ARCHIVE.md"; printf '[{"slug":"c1","action":"deleted","reason":"stale"}]' > "$CLAUDE_CONFIG_DIR/loop/log/garden-declared-$(date +%Y-%m-%d).json"; echo done > "$digest"; echo '{"is_error":false}'; exit 0;;
+  drop-declared)   rm -f "$store/c1.md"; grep -v '(c1.md)' "$store/ARCHIVE.md" > "$store/.a" && mv "$store/.a" "$store/ARCHIVE.md"; printf '[{"slug":"c1","action":"deleted","reason":"stale"}]' > "$declared"; echo done > "$digest"; echo '{"is_error":false}'; exit 0;;
   *) echo '{"is_error":false}'; exit 0;;
 esac
 STUB
@@ -107,7 +128,7 @@ build_store; pre="$(mhead)"; s0="$(sig)"; rm -f "$L/state/garden.fail"; run_gard
 ok "$(mhead)" "$pre" "(ii) mangle → HEAD == pre-garden (no corruption committed)"
 ok "$(sig)" "$s0" "(ii) mangle → store byte-identical to pre"
 ok "$([ -f "$L/state/garden.fail" ] && echo yes || echo no)" yes "(ii) garden.fail marked"
-ok "$([ -f "$L/log/garden-FAILED-$(date +%Y-%m-%d).patch" ] && echo yes || echo no)" yes "(ii) forensic patch written"
+ok "$(ls "$L/log/garden-FAILED-"*.patch >/dev/null 2>&1 && echo yes || echo no)" yes "(ii) forensic patch written"
 
 # (iii) rc-fail → RESTORE regardless of content
 build_store; pre="$(mhead)"; s0="$(sig)"; run_garden rcfail
@@ -148,10 +169,10 @@ ok "$(grep -c 'materialize: quarantine' "$P_LOG" 2>/dev/null | tr -d ' ' | grep 
 echo "── Part 4: incident replay ──"
 cat > "$sbin/claude" <<'STUB'
 #!/usr/bin/env bash
-cat >/dev/null
-store="$CLAUDE_CONFIG_DIR/memory-global"; digest="$CLAUDE_CONFIG_DIR/loop/log/garden-$(date +%Y-%m-%d).md"
-m="$store/MEMORY.md"; { sed -n '3p' "$m" | tr -d '\n'; sed -n '4p' "$m"; } > /tmp/gi.$$; sed -i.bak '3,4d' "$m"; cat /tmp/gi.$$ >> "$m"; rm -f /tmp/gi.$$ "$m.bak"
-rm -f "$store/c1.md"; grep -v '(c1.md)' "$store/ARCHIVE.md" > "$store/.a" && mv "$store/.a" "$store/ARCHIVE.md"
+prompt="$(cat)"; store="$CLAUDE_CONFIG_DIR/memory-global"
+digest="$(printf '%s' "$prompt" | tr '`' '\n' | grep -oE '^/[^ ]*garden-[0-9][0-9-]*\.md$' | head -1)"
+sed -i.bak '3s/$/ - [h2b](h2b.md) — merged/' "$store/MEMORY.md"; rm -f "$store/MEMORY.md.bak"   # mangle line 3
+rm -f "$store/c1.md"; grep -v '(c1.md)' "$store/ARCHIVE.md" > "$store/.a" && mv "$store/.a" "$store/ARCHIVE.md"   # + drop c1
 echo done > "$digest"; echo '{"is_error":false}'; exit 0
 STUB
 chmod +x "$sbin/claude"

@@ -6,6 +6,7 @@
 # logging secrets in slash-command args); `loopctl skill-stats` aggregates
 # (and filters built-in commands). Best-effort + NON-BLOCKING: always exits 0, never disrupts a session.
 . "$(dirname "${BASH_SOURCE[0]}")/../lib.sh" 2>/dev/null || exit 0
+loop_enabled || exit 0   # kill switch: LOOP_ENABLED=0 → fully inert (zero writes, zero stdout)
 mkdir -p "$STATE_DIR" 2>/dev/null
 cat 2>/dev/null | jq -c '
   if (.hook_event_name=="PostToolUse" and .tool_name=="Skill") then
