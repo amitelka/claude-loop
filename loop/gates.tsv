@@ -1,0 +1,26 @@
+# Gate-runner rows — THE injection engine's config (one runner consumes this table). TAB-separated.
+# columns: name  event  matcher(tool regex; "." = any/none)  field(jq expr → query text)  threshold  mode  inject
+# mode: shadow (score→log only) | live (score→log→inject) | off. INJECTION FLIP = set rows 1-2 to `live`
+#   (after LOOP_ENABLED=1 re-enables the loop). All start shadow so re-enabling the loop injects nothing.
+# inject: context = hookSpecificOutput.additionalContext (→ the CALLER's conversation; correct for prompt-submit/
+#   friction/seeking/hazard). prompt = hookSpecificOutput.updatedInput with tool_input.prompt amended (→ the
+#   SUBAGENT's own prompt; required for subagent-spawn — additionalContext on a Task hook lands in the PARENT,
+#   empirically verified). updatedInput is wholesale-replace, so the runner rebuilds the full tool_input.
+# threshold gates the inject stage only, PER CANDIDATE (each injected slug needs its OWN score ≥ threshold, so a
+#   deduped high-scorer can't carry sub-threshold tail candidates in); shadow rows log regardless of threshold.
+# rows 1-2 threshold 5.1 = the A/B precision-sweep max-recall operating point (recall 24/24, false-inject 12/15;
+#   strictly dominates 0 — same recall, fewer false-injects; recall-favoring by operator policy, documented in the threshold decision record). SNAPSHOT calibration:
+#   BM25 scores are non-stationary (IDF/N/avgdl shift as the corpus grows), so probes_ci_test WARNs when the
+#   sweep's max-recall T diverges >1.0 from this value. On first drift, evolve this constant into a QUANTILE rule
+#   (T = pXX of the negative-set top-1 scores, recomputed per rev by probes-CI) — self-calibrating; triggered then.
+# PHASE 3 — rows 3-5 are NOT registered at landing (merge_hooks wires only the 1/turn gates 1-2 + PreCompact),
+#   so they neither score nor add latency until Phase 3 explicitly registers them. Registration ORDER when it does:
+#   1) friction FIRST — PostToolUse, pays python only on an error-bearing result (near-zero cost, loosest/highest-value).
+#   2) seeking + hazard TOGETHER, and only alongside the per-turn injection cap (≤2/turn) — they are synchronous
+#      PreToolUse (python before EVERY Grep/WebSearch/Bash/Edit), which is exactly what the cap + tuned thresholds justify.
+#   Also pending: per-machine gate overrides via config.local.sh (spec'd, not yet implemented).
+prompt-submit	UserPromptSubmit	.	.prompt // empty	5.1	shadow	context
+subagent-spawn	PreToolUse	Task|Agent	.tool_input.prompt // .tool_input.description // empty	5.1	shadow	prompt
+friction	PostToolUse	.	.tool_response.stderr // .tool_response.error // empty	6	shadow	context
+seeking	PreToolUse	WebSearch|WebFetch|Grep	.tool_input.query // .tool_input.pattern // empty	4	shadow	context
+hazard	PreToolUse	Bash|Edit	.tool_input.command // .tool_input.file_path // empty	8	shadow	context

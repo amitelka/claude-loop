@@ -142,13 +142,24 @@ PLIST
   rollback)
     ref="${1:-}"; [ -n "$ref" ] || { echo "usage: loopctl rollback <commit>   (see: loopctl mem-log)"; exit 1; }
     mem_snapshot "pre-rollback"
-    mem_git checkout "$ref" -- . && { log "rollback: memory-global -> $ref"; echo "memory-global restored to $ref (prior state saved as a snapshot first)"; };;
+    mem_git checkout "$ref" -- . && { log "rollback: memory-global -> $ref"; rebuild_mem_index "rollback"; echo "memory-global restored to $ref (prior state saved as a snapshot first)"; };;
+  reindex) rebuild_mem_index "manual reindex"; echo "derived retriever index rebuilt (mem-index.json)";;
   doctor)
     okx(){ echo "  ✓ $1"; }; wrn(){ echo "  ⚠ $1"; }
     echo "── loop doctor ──"
     for hk in Stop SessionStart SessionEnd PostToolUse UserPromptExpansion; do jq -e ".hooks.$hk" "$CLAUDE_HOME/settings.json" >/dev/null 2>&1 && okx "hook $hk wired" || wrn "hook $hk MISSING"; done
+    # injection engine: assert the SPECIFIC gate-runner/precompact commands are registered (event-presence alone
+    # reports green with the whole engine unwired — doctor's job is surfacing exactly that silent-dead state)
+    hookcmd(){ jq -r --arg e "$1" '[.hooks[$e][]?.hooks[]?.command]|join(" ")' "$CLAUDE_HOME/settings.json" 2>/dev/null; }
+    case "$(hookcmd UserPromptSubmit)" in *"gate-runner.sh prompt-submit"*) okx "inject: prompt-submit gate wired";; *) wrn "inject: prompt-submit gate NOT wired (claude-loop install)";; esac
+    case "$(hookcmd PreToolUse)" in *"gate-runner.sh subagent-spawn"*) okx "inject: subagent-spawn gate wired";; *) wrn "inject: subagent-spawn gate NOT wired (claude-loop install)";; esac
+    case "$(hookcmd PreCompact)" in *"on-precompact.sh"*) okx "inject: PreCompact dedup-reset wired";; *) wrn "inject: PreCompact dedup-reset NOT wired (claude-loop install)";; esac
     la=$(launchctl list 2>/dev/null | grep -c claudeloop); [ "${la:-0}" -ge 2 ] && okx "launchd: $la agents loaded" || wrn "launchd: ${la:-0}/2 (run: loopctl install-schedule)"
     dd=$(mem_git status --porcelain 2>/dev/null | wc -l | tr -d ' '); [ "${dd:-0}" = 0 ] && okx "memory-global clean" || wrn "memory-global: $dd uncommitted (loopctl snapshot)"
+    idx="$STATE_DIR/mem-index.json"
+    if [ ! -f "$idx" ]; then wrn "mem-index.json missing — retriever scores an empty corpus (loopctl reindex)"
+    elif [ -n "$(find "$MEMORY_DIR" -name '*.md' -newer "$idx" 2>/dev/null | head -1)" ]; then wrn "mem-index.json stale — a memory changed since last build (loopctl reindex)"
+    else okx "mem-index.json fresh"; fi
     now="$(date +%s)"; sl=""
     for lk in "$STATE_DIR"/*.lock; do
       [ -d "$lk" ] || continue

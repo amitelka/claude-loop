@@ -29,16 +29,44 @@ measure_append() { mkdir -p "$MEASURE_DIR" 2>/dev/null; printf '%s\n' "$2" >> "$
 # garden git diff — DETERMINISTIC, not LLM-emitted (the prose digest already has rationale; this is its
 # machine-readable companion). Feeds regret-tracking + prune-class stats. Written on every successful
 # garden (gardener telemetry, not measurement-gated). MEMORY.md index churn is skipped (not an action).
+sanitize_sid() {   # a hook-provided session_id must NEVER be used as a raw path component (../ traversal).
+  local s; s="$(printf '%s' "${1:-}" | tr -cd 'A-Za-z0-9._-')"   # drop '/' and everything non-filename-safe
+  printf '%s' "${s:-nosession}"
+}
+
+rebuild_mem_index() {   # (re)build the derived retriever index from the current store; $1 = log-context label.
+  [ -d "$MEMORY_DIR" ] || return 0   # ONE place every store mutation (write/rollback/install) refreshes the index
+  /usr/bin/python3 "$LOOP_DIR/bin/build_index.py" "$MEMORY_DIR" "$STATE_DIR/mem-index.json" >/dev/null 2>&1 \
+    && log "index rebuild (${1:-write})"
+}
+
 garden_actions() {  # $1=pre_rev $2=post_rev
   local pre="$1" post="$2" run st old path slug act
   [ -n "$pre" ] && [ -n "$post" ] || return 0
   run="$(date +%s)"; mkdir -p "$STATE_DIR" 2>/dev/null
   mem_git diff --name-status "$pre" "$post" -- '*.md' 2>/dev/null | while IFS="$(printf '\t')" read -r st old path; do [ -n "$path" ] || path="$old"
-    case "$path" in */MEMORY.md|MEMORY.md) continue;; esac
+    case "$path" in */MEMORY.md|MEMORY.md|*/ARCHIVE.md|ARCHIVE.md) continue;; esac   # index files, not memories
     slug="$(basename "$path" .md)"
     case "$st" in D) act=deleted;; A) act=added;; M) act=modified;; R*) act=renamed;; *) act="$st";; esac
     printf '{"v":%s,"ts":%s,"stream":"garden-action","action":"%s","slug":"%s"}\n' "${MEASUREMENT_VERSION:-1}" "$run" "$act" "$slug"
   done >> "$STATE_DIR/garden-actions.jsonl" 2>/dev/null
+  # Hot-budget moves: tier = which index lists a slug (not frontmatter), so a promote/demote is an index line
+  # crossing MEMORY.md ↔ ARCHIVE.md. Audit it — hot is the one contended tier (POLICY.md curation rules).
+  local hpre hpost cpre cpost s
+  idx_slugs(){ mem_git show "$1" 2>/dev/null | sed -n 's/.*](\([a-z0-9][a-z0-9-]*\)\.md).*/\1/p'; }
+  hpre="$(idx_slugs "$pre:MEMORY.md")";  hpost="$(idx_slugs "$post:MEMORY.md")"
+  cpre="$(idx_slugs "$pre:ARCHIVE.md")"; cpost="$(idx_slugs "$post:ARCHIVE.md")"
+  { for s in $hpost; do
+      printf '%s\n' "$hpre" | grep -qxF "$s" && continue          # already hot pre → not a move
+      printf '%s\n' "$cpre" | grep -qxF "$s" || continue          # only if it was cold pre → promoted
+      printf '{"v":%s,"ts":%s,"stream":"garden-action","action":"promoted","slug":"%s"}\n' "${MEASUREMENT_VERSION:-1}" "$run" "$s"
+    done
+    for s in $cpost; do
+      printf '%s\n' "$cpre" | grep -qxF "$s" && continue          # already cold pre → not a move
+      printf '%s\n' "$hpre" | grep -qxF "$s" || continue          # only if it was hot pre → demoted
+      printf '{"v":%s,"ts":%s,"stream":"garden-action","action":"demoted","slug":"%s"}\n' "${MEASUREMENT_VERSION:-1}" "$run" "$s"
+    done
+  } >> "$STATE_DIR/garden-actions.jsonl" 2>/dev/null
 }
 
 # Counts over a RAW JSONL slice on stdin.

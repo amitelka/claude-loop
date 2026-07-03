@@ -24,6 +24,8 @@ ts="$(date '+%Y%m%dT%H%M%S')"
 proposal="$LOOP_DIR/proposals/$session-$ts.json"
 
 prompt="$(cat "$LOOP_DIR/prompts/review.md")"
+policy="$(cat "$LOOP_DIR/POLICY.md" 2>/dev/null)"   # single source; both prompts interpolate it (no doc↔prompt drift)
+prompt="${prompt//'{{POLICY}}'/$policy}"
 prompt="${prompt//'{{SLICE_FILE}}'/$slice_txt}"
 prompt="${prompt//'{{SESSION}}'/$session}"
 prompt="${prompt//'{{CWD}}'/$cwd}"

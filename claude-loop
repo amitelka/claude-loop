@@ -34,6 +34,16 @@ merge_hooks(){
       .hooks[$ev] = (((.hooks[$ev] // [])
         | map(select(((.hooks // []) | map(.command) | join(" ")) | contains($f) | not)))
         + [{"matcher":$m, "hooks":[{"type":"command","command":("bash " + $base + "/hooks/" + $f)}]}]);
+    def putg($ev; $gate):     # gate-runner (bin/, takes a gate-name arg); dedup on the full "…gate-runner.sh <gate>" cmd
+      (($base + "/bin/gate-runner.sh " + $gate)) as $cmd
+      | .hooks[$ev] = (((.hooks[$ev] // [])
+        | map(select(((.hooks // []) | map(.command) | join(" ")) | contains($cmd) | not)))
+        + [{"hooks":[{"type":"command","command":("bash " + $cmd)}]}]);
+    def putgm($ev; $gate; $m): # matcher-aware gate-runner variant (one PreToolUse row per matcher → its own gate)
+      (($base + "/bin/gate-runner.sh " + $gate)) as $cmd
+      | .hooks[$ev] = (((.hooks[$ev] // [])
+        | map(select(((.hooks // []) | map(.command) | join(" ")) | contains($cmd) | not)))
+        + [{"matcher":$m, "hooks":[{"type":"command","command":("bash " + $cmd)}]}]);
     .hooks = (.hooks // {})
     | put("Stop"; "on-stop.sh")
     | put("SessionStart"; "on-session-start.sh")
@@ -41,7 +51,15 @@ merge_hooks(){
     | putm("PostToolUse"; "on-skill-use.sh"; "Skill")
     | putm("UserPromptExpansion"; "on-skill-use.sh"; ".*")
     | putm("PostToolUse"; "on-read.sh"; "Read")
-    | put("UserPromptSubmit"; "on-shadow.sh")
+    # injection engine: gate-runner per event (gates.tsv routes each to score→log→maybe-inject). on-shadow.sh
+    # was absorbed — strip any stale registration from an older install so we do not leave a dead hook.
+    | .hooks.UserPromptSubmit = ((.hooks.UserPromptSubmit // []) | map(select(((.hooks // []) | map(.command) | join(" ")) | contains("on-shadow.sh") | not)))
+    | putg("UserPromptSubmit"; "prompt-submit")
+    | putgm("PreToolUse"; "subagent-spawn"; "Task|Agent")
+    # rows 3-5 (friction/seeking/hazard) are NOT registered at landing — only the 1/turn gates are, to keep
+    # flip-day latency off the hot path. Phase 3 adds them (friction first, then seeking/hazard with the
+    # per-turn cap) per the gates.tsv precondition block. PreCompact resets rows 1-2 inject-dedup after compaction.
+    | put("PreCompact"; "on-precompact.sh")
   ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS" || die "settings.json hook-merge failed"
 }
 
@@ -52,14 +70,15 @@ unmerge_hooks(){
     def rm($ev; $f):
       .hooks[$ev] = ((.hooks[$ev] // []) | map(select(((.hooks // []) | map(.command) | join(" ")) | contains($f) | not)))
       | if (.hooks[$ev] // [] | length) == 0 then del(.hooks[$ev]) else . end;
-    if .hooks then rm("Stop";"on-stop.sh") | rm("SessionStart";"on-session-start.sh") | rm("SessionEnd";"on-session-end.sh") | rm("PostToolUse";"on-skill-use.sh") | rm("PostToolUse";"on-read.sh") | rm("UserPromptExpansion";"on-skill-use.sh") | rm("UserPromptSubmit";"on-shadow.sh") else . end
+    if .hooks then rm("Stop";"on-stop.sh") | rm("SessionStart";"on-session-start.sh") | rm("SessionEnd";"on-session-end.sh") | rm("PostToolUse";"on-skill-use.sh") | rm("PostToolUse";"on-read.sh") | rm("UserPromptExpansion";"on-skill-use.sh") | rm("UserPromptSubmit";"on-shadow.sh") | rm("UserPromptSubmit";"gate-runner.sh") | rm("PreToolUse";"gate-runner.sh") | rm("PostToolUse";"gate-runner.sh") | rm("PreCompact";"on-precompact.sh") else . end
   ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
 }
 
 place(){   # $1 = copy|link
   mkdir -p "$LOOP/state" "$LOOP/log" "$LOOP/proposals" "$LOOP/pending/skills" "$LOOP/pending/memories" "$LOOP/archive" "$SKILLS_DIR"
   if [ "$1" = link ]; then
-    for p in bin hooks prompts lib.sh config.sh; do rm -rf "$LOOP/$p"; ln -s "$REPO/loop/$p" "$LOOP/$p"; done
+    for p in bin hooks prompts lib.sh config.sh gates.tsv tags.sh; do rm -rf "$LOOP/$p"; ln -s "$REPO/loop/$p" "$LOOP/$p"; done
+    rm -rf "$LOOP/POLICY.md"; ln -s "$REPO/POLICY.md" "$LOOP/POLICY.md"   # judgment layer (repo root, not loop/) → runtime {{POLICY}}
     for s in review-memories review-skills; do rm -rf "$SKILLS_DIR/$s"; ln -s "$REPO/skills/$s" "$SKILLS_DIR/$s"; done
   else
     mkdir -p "$LOOP/bin" "$LOOP/hooks" "$LOOP/prompts"
@@ -68,9 +87,14 @@ place(){   # $1 = copy|link
     cp -R "$REPO/loop/prompts/." "$LOOP/prompts/"
     cp "$REPO/loop/lib.sh" "$LOOP/lib.sh"
     cp "$REPO/loop/config.sh" "$LOOP/config.sh"       # defaults; your config.local.sh is never touched
+    cp "$REPO/loop/tags.sh" "$LOOP/tags.sh"           # log-tag registry (lib.sh sources it at runtime)
+    cp "$REPO/loop/gates.tsv" "$LOOP/gates.tsv"       # injection-engine config (gate-runner reads $LOOP/gates.tsv)
+    cp "$REPO/POLICY.md" "$LOOP/POLICY.md"            # judgment layer (repo root, not loop/) → runtime {{POLICY}}
     for s in review-memories review-skills; do rm -rf "$SKILLS_DIR/$s"; cp -R "$REPO/skills/$s" "$SKILLS_DIR/$s"; done
   fi
   chmod +x "$LOOP/bin/"* "$LOOP/hooks/"*.sh 2>/dev/null || true
+  # build the initial derived index so a fresh install/update never scores an empty corpus before the first write
+  [ -d "$CLAUDE_HOME/memory-global" ] && /usr/bin/python3 "$LOOP/bin/build_index.py" "$CLAUDE_HOME/memory-global" "$LOOP/state/mem-index.json" >/dev/null 2>&1 || true
 }
 
 cmd="${1:-status}"; shift 2>/dev/null || true
@@ -99,7 +123,7 @@ case "$cmd" in
     # launchd lives in ~/Library/LaunchAgents (NOT isolated by CLAUDE_CONFIG_DIR) — only touch it for a real default install
     if [ "$CLAUDE_HOME" = "$HOME/.claude" ] && [ -e "$LOOP/bin/loopctl" ]; then bash "$LOOP/bin/loopctl" uninstall-schedule 2>/dev/null
     else echo "  (skipped launchd cleanup — non-default CLAUDE_CONFIG_DIR; remove ~/Library/LaunchAgents/io.claudeloop.* manually if you set up a schedule)"; fi
-    for p in bin hooks prompts lib.sh config.sh; do rm -rf "$LOOP/$p"; done
+    for p in bin hooks prompts lib.sh config.sh gates.tsv tags.sh POLICY.md; do rm -rf "$LOOP/$p"; done
     for s in review-memories review-skills; do rm -rf "$SKILLS_DIR/$s"; done
     if [ "$purge" = 1 ]; then rm -rf "$LOOP"; echo "✓ uninstalled + PURGED ($LOOP removed)"
     else echo "✓ uninstalled machinery + hooks + schedule. Kept your data in $LOOP/ (state, log, proposals, pending, archive, .env, config.local.sh)."; fi

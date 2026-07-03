@@ -17,3 +17,14 @@ loop/archive/
 # Your actual memories live in ~/.claude/memory-global (a separate git repo), never here.
 
 .DS_Store
+
+# Local backups (never commit)
+.backups/
+
+# Migration review artifact (personal)
+migration-classification.md
+migration-ab-packet.md
+
+# Probes-CI fixture — private-corpus prompts + expected slugs; the local-only probes-CI test
+# (loop/tests/probes_ci_test.sh) skips loudly when it's absent, so it never ships to the public repo.
+loop/tests/probes.jsonl

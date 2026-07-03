@@ -48,7 +48,10 @@ for ((i=0; i<mlen && i<3; i++)); do
     printf -- '---\n\n'; printf '%s\n' "$full"; } > "$dest"
   [ -n "$whyfile" ] && printf 'source_session: %s\nrepo: %s\nwhy: %s\n' "$session" "$repo" "$why" > "$whyfile"
   if [ "$LOOP_MODE" = active ]; then
-    grep -q "($slug.md)" "$MEMORY_DIR/MEMORY.md" 2>/dev/null || printf -- '- [%s](%s.md) — %s\n' "$slug" "$slug" "$desc" >> "$MEMORY_DIR/MEMORY.md"
+    # Tier routing (POLICY.md, Option B — deterministic by type): feedback|user = session-invariant → hot
+    # (MEMORY.md); reference|project = cold → ARCHIVE.md. The gardener promotes the rare cross-cutting ref.
+    case "$type" in feedback|user) idxfile="$MEMORY_DIR/MEMORY.md";; *) idxfile="$MEMORY_DIR/ARCHIVE.md";; esac
+    grep -q "($slug.md)" "$idxfile" 2>/dev/null || printf -- '- [%s](%s.md) — %s\n' "$slug" "$slug" "$desc" >> "$idxfile"
   fi
   log "  +mem $slug -> ${dest#$HOME/}"; acc_m=$((acc_m+1))
   # Regret signal: the gardener deleted this exact slug in a past run (garden-actions sidecar) and the
@@ -58,5 +61,8 @@ for ((i=0; i<mlen && i<3; i++)); do
     && log "  regret $slug (gardener pruned it earlier; reviewer re-captured)"
 done
 
-[ "$wrote_active" = 1 ] && mem_snapshot "post-materialize-$session"
+if [ "$wrote_active" = 1 ]; then
+  mem_snapshot "post-materialize-$session"
+  rebuild_mem_index "materialize $session"   # derived retriever index; stale index self-heals next write
+fi
 log "materialize: $session done mem(+$acc_m/-$rej_m) mode=$LOOP_MODE"

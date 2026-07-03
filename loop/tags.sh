@@ -16,3 +16,4 @@ TAG_MINER_CATCHUP="miner catch-up"      # a miner catch-up fired (stats: self-he
 TAG_MINE_DONE="mine-skills: done"       # a mine run completed (stats: miner runs real/dry)
 TAG_MINE_FAILED="mine-skills: FAILED"   # a mine run hard-failed (stats: miner fails)
 TAG_REGRET="  regret "                  # gardener pruned a slug the reviewer later re-captured (stats: regret)
+TAG_INDEX_REBUILD="index rebuild"       # derived retriever index rebuilt on write (materialize/garden → build_index.py)

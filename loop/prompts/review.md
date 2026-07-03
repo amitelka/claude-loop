@@ -4,11 +4,14 @@ You are the background reviewer for a self-improving Claude Code loop. You do NO
 Read the conversation slice at: {{SLICE_FILE}}
 Session: `{{SESSION}}`  ·  working dir: `{{CWD}}`
 
+## Policy — capture bar, tiers, description quality (authoritative; governs everything below)
+{{POLICY}}
+
 ## Dedup awareness
 Before proposing, check what already exists so you don't repeat it: read `{{MEMORY_DIR}}/MEMORY.md` and Grep `{{MEMORY_DIR}}`. Do not propose anything already covered (a local validator also rejects duplicates, but don't rely on it).
 
 ## Bar — strict
-Propose only learnings that are durable (true beyond this session) AND non-obvious AND reusable. Most slices yield nothing — that is the common, correct result. Never include secrets, tokens, or credentials.
+Apply the **capture bar** in Policy above (durable AND non-obvious AND reusable; most slices yield nothing; never secrets). Write each `description` as a **retrieval document** per Policy — symptom-phrased, keeping the distinctive tokens (exact error text, command/flag names, proper nouns) a future prompt would actually search on. You do NOT choose the tier: it is assigned automatically from `type` (feedback/user → hot, reference/project → cold), so just pick the correct `type`.
 - memory.type: `user` (who they are / prefs) | `feedback` (a correction or working-style rule) | `project` (ongoing work / constraints not in the code) | `reference` (a URL / dashboard / API quirk / durable fact).
 
 ## Repo tag (optional)

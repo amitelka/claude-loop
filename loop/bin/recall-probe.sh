@@ -10,12 +10,14 @@ set -uo pipefail
 export LOOP_REVIEWER=1   # loop-session opt-out (this harness is loop-adjacent; see the CHILD-guard memory)
 probes="${1:-$LOOP_DIR/probes.tsv}"
 [ -f "$probes" ] || { echo "no probe set at $probes (tab-separated: prompt<TAB>expected_slug)"; exit 1; }
+idx="$(mktemp)"; trap 'rm -f "$idx"' EXIT                                   # bm25f-1 scores a derived index,
+/usr/bin/python3 "$LOOP_DIR/bin/build_index.py" "$MEMORY_DIR" "$idx" >/dev/null 2>&1   # not MEMORY.md directly
 n=0 h1=0 h3=0
 while IFS=$'\t' read -r prompt expect _; do
   case "$prompt" in ''|'#'*) continue;; esac
   [ -n "${expect:-}" ] || continue
   n=$((n + 1))
-  slugs="$(MEM_INDEX="$MEMORY_DIR/MEMORY.md" MV="$MEASUREMENT_VERSION" \
+  slugs="$(MEM_INDEX_JSON="$idx" MV="$MEASUREMENT_VERSION" \
            /usr/bin/python3 "$LOOP_DIR/bin/shadow_score.py" <<<"$prompt" 2>/dev/null | jq -r '.top[].slug' 2>/dev/null)"
   t1="$(printf '%s\n' "$slugs" | head -1)"
   if [ "$t1" = "$expect" ]; then h1=$((h1 + 1)); h3=$((h3 + 1)); v="hit@1"

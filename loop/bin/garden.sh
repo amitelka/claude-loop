@@ -16,6 +16,8 @@ digest="$LOOP_DIR/log/garden-$stamp.md"
 start="$(date +%s)"
 
 prompt="$(cat "$LOOP_DIR/prompts/garden.md")"
+policy="$(cat "$LOOP_DIR/POLICY.md" 2>/dev/null)"   # single source; both prompts interpolate it (no doc↔prompt drift)
+prompt="${prompt//'{{POLICY}}'/$policy}"
 prompt="${prompt//'{{MODE}}'/$LOOP_MODE}"
 prompt="${prompt//'{{MEMORY_DIR}}'/$MEMORY_DIR}"
 prompt="${prompt//'{{SKILLS_DIR}}'/$SKILLS_DIR}"
@@ -57,6 +59,7 @@ if [ "$ok" = 1 ]; then
   mem_snapshot "post-garden"
   garden_actions "$pre_rev" "$(mem_git rev-parse HEAD 2>/dev/null)"   # deterministic prune/merge/trim sidecar
   date +%s > "$STATE_DIR/garden.success"; rm -f "$STATE_DIR/garden.fail"
+  rebuild_mem_index "garden"   # derived retriever index; stale index self-heals next write
   log "garden: done (ok) cost=${cost:-?} -> $digest"
 else
   mem_snapshot "post-garden-FAILED"   # truthful label; pre-garden snapshot remains the rollback point
