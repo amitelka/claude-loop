@@ -18,16 +18,35 @@ Nothing is enabled silently. `./claude-loop install --link` symlinks the machine
 ## How it works
 
 ```
-trigger → reviewer → proposal.json → gatekeeper → store → (recall) → gardener
+capture:  trigger → reviewer → proposal.json → gatekeeper → hot/cold store
+recall:   prompt / subagent → retriever scores the store → injects pointers → you Read the file
+maintain: nightly gardener curates both tiers
 ```
+
+Memory lives in **two tiers**: a small **hot** index (`MEMORY.md`, auto-loaded every session — session-invariant rules, user/env, cross-cutting facts) and an unbounded **cold** archive (`ARCHIVE.md`, never auto-loaded — reached only by the retriever or grep). See [BEHAVIOR.md](BEHAVIOR.md) for what this feels like and [ARCHITECTURE.md](ARCHITECTURE.md) for the structure.
 
 - **Triggers** — review at **session close** (`SessionEnd`), a mid-session top-up every ~20 tool-calls, and a daily **harvest** backstop. Watermarks advance only on a *successful* review, so a failed/API-errored run retries.
 - **Reviewer** (Sonnet, read-only-ish): renders the **active branch only** of the transcript (drops Esc-Esc rewind forks, `isMeta` noise, harness wrappers; keeps subagent `Task` returns), and **writes a JSON proposal file** — it never writes real state.
-- **Gatekeeper** (`materialize.sh`, bash+jq): validates slug/type/fields, scans for secrets, dedups, caps counts, **code-generates frontmatter**, writes everything to `memory-global` (with an optional `repo:` tag for later filtering — one store, no per-repo dirs). A guard aborts if the reviewer touched anything but its proposal.
+- **Gatekeeper** (`materialize.sh`, bash+jq): validates slug/type/fields, scans for secrets, dedups, caps counts, **code-generates frontmatter**, and **routes each memory to a tier by type** (feedback/user → hot, reference/project → cold) in `memory-global` (optional `repo:` tag for later filtering — one store, no per-repo dirs). A guard aborts if the reviewer touched anything but its proposal.
 - **Store** — `~/.claude/memory-global/` is a git repo; active-mode writes are snapshot-bracketed and `loopctl rollback`-able.
-- **Gardener** (Opus, daily): dedups/prunes/re-verifies against live code, enforces the `MEMORY.md` size cap. Never auto-edits skills. A run counts as done only if it wrote a fresh digest with no API error.
-- **Self-heal** (gardener + skill-miner): a **missed** run (Mac asleep past its slot) or a **failed** one is re-run by a catch-up — fired from the nightly harvest *and*, decoupled from launchd's once-a-day wake, the moment you're next active at the machine (`Stop` hook every turn; sessions stay open so `SessionStart` rarely re-fires). One ordered detached worker runs garden-then-miner so a miner retry can't win the store lock and starve the gardener; each trigger is independent, gated to ≤ once / 2h. `loopctl doctor` flags a stale/failed garden or a pending miner failure.
+- **Retriever** — ships **disabled** behind **two independent switches, both required to inject**: (1) the loop enabled (`loopctl enable` → `LOOP_ENABLED=1`, plus `MEASUREMENT_ENABLED=1`; both default `0`), and (2) the prompt-submit / subagent-spawn gate rows flipped `shadow`→`live` (default `shadow`). `loopctl enable` sets only the first — so it alone does **not** inject. With both set, on prompt-submit and subagent-spawn a deterministic **BM25F** scorer ranks the whole store and injects the top **pointers, not bodies** — Claude Reads the file only if it's relevant. Why pointers, and how the scorer was chosen: [docs/decisions/](docs/decisions/).
+- **Gardener** (Opus, daily): dedups, prunes, and re-verifies against live code; keeps the **hot** index within its budget by demoting reference-class entries to **cold** (rules are never demoted — they graduate upward), and curates cold. Never auto-edits skills. A run counts as done only if it wrote a fresh digest with no API error.
+- **Self-heal** (gardener + skill-miner): a **missed** run (Mac asleep past its slot) or a **failed** one is re-run by a catch-up — fired from the nightly harvest *and*, the moment you're next active, from the `Stop` hook (sessions often stay open for days, so `SessionStart` alone would rarely fire; the catch-up rides every turn instead). The presence path (the `Stop` worker) is gated by an **atomic single-worker lock**, so at most one *detached* worker runs no matter how many turns fire it. The nightly harvest is a **separate entry** running the same due-checks — not behind that gate; instead the **store lock** serializes everything that mutates the store: in the catch-up **worker** garden runs **then** miner in sequence; the independently scheduled agents (gardener 03:00, miner 04:00) aren't coupled by an ordering lock — the **store lock** serializes any overlap (busy → **skip, not queue**) and the catch-up paths supply the retry, so no two paths overlap or starve each other. Each catch-up is independently gated to **≤ once / 2h**. `loopctl doctor` flags a stale/failed garden or a pending miner failure.
 - **Review queue** — skills always stage for `/review-skills`; staged memories triage via `/review-memories`. A SessionStart line surfaces what changed since you were last here.
+
+## Documentation map
+
+One home per question — the files deliberately don't overlap (link, never duplicate):
+
+| File | Question it answers |
+|---|---|
+| `ARCHITECTURE.md` | **What exists** — components, flows, invariants |
+| `BEHAVIOR.md` | **What you experience** — what happens at each moment, what's human-gated, the knobs and vital signs |
+| `POLICY.md` | **How the loop judges** — capture bar, tiers, curation rules (the prompts interpolate this file at runtime) |
+| `docs/decisions/` | **Why it's this way, and how we know** — standalone decision records, one per file, each self-proving: context → decision → evidence → consequences |
+| `backlog.md` (untracked) | Open decisions and working notes — private, never shipped |
+
+Evidence rule for `docs/decisions/`: every claim cites its receipt (measurement, artifact hash, or experiment) or is explicitly marked unverified. Method, numbers, and artifact hashes ship; private fixtures and personal context never do (same boundary as the gitignored probe set).
 
 ## Commands
 
