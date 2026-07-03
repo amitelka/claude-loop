@@ -66,6 +66,7 @@ memories) are waiting.
 
 ## What runs when
 - **Per finished session / on Stop:** the reviewer considers whether anything is worth capturing (usually not).
+- **Nightly (backstop):** a harvest pass reviews any session activity the Stop-hook path missed or that ended below its threshold — the safety net that turns a missed capture into a delay, not a loss.
 - **Nightly:** the gardener curates the whole store and rebuilds the retriever's index.
 - **On any write, rollback, or install:** the derived index is rebuilt so retrieval never scores a stale corpus.
 
