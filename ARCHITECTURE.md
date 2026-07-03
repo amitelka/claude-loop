@@ -165,7 +165,10 @@ three-phase adversarial review (design → instrument → inference).
 
 - Both stores are git repositories; every mutation is snapshot-bracketed; `loopctl rollback` /
   `skill-rollback` revert.
-- Kill switches at three levels: loop, measurement, per-gate mode column.
+- Kill switches at three levels: loop, measurement, per-gate mode column. **Known gap (planned
+  fix):** `LOOP_ENABLED` currently gates the hook/injection path but not the scheduled entry
+  points (nightly gardener/harvest/miner) — they are invoked directly by the scheduler and don't
+  yet check it, so "loop off" must today be paired with unloading the schedule.
 - `LOOP_REVIEWER=1` is the opt-out contract: every loop-internal or loop-adjacent `claude -p`
   (reviewer, gardener, miner, probes, backtests) exports it so hooks and telemetry ignore those
   sessions.
@@ -179,9 +182,15 @@ three-phase adversarial review (design → instrument → inference).
 - **Shipped (implemented and live today):** write path (reviewer → gatekeeper → store), gardener
   + telemetry, skills track, measurement substrate (shadow logging, read telemetry, probes-CI,
   regret, tags contract, CI), peer-tool pointer surface.
-- **Built and review-cleared, awaiting the operator's landing sitting:** hot/cold store split,
-  the injection engine (gate-runner; prompt-submit + subagent-spawn rows), capture-into-tier +
-  POLICY interpolation.
+- **Landed and verified live, currently gated off:** hot/cold store split, the injection engine
+  (gate-runner; prompt-submit + subagent-spawn rows), capture-into-tier + POLICY interpolation —
+  all installed and exercised live (injection verified end-to-end). The loop's scheduled
+  automation is presently disabled by the operator on cost grounds and stays off until the two
+  hardening items below land; the injection (read) path is independent of that switch.
 - **Pending a human sitting:** the rules graduation batch (memory → instruction layer).
+- **Hardening — blocks re-enabling the scheduled loop:** (1) gardener store-integrity validation
+  + auto-rollback — an LLM gardener editing the hot index directly can corrupt it, so a failed or
+  malformed run must auto-restore the pre-run snapshot and never commit a partial mutation as HEAD;
+  (2) the loop kill switch must gate the scheduled entry points too (see Safety & control).
 - **Planned (Phase 3):** mid-turn gates (shadow-first, friction first), warm-start, search CLI,
   per-turn injection cap; then the backlog's NEXT track.
