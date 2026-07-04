@@ -7,9 +7,9 @@
 LOOP_ENABLED=0        # 0 = hooks no-op. Turn on with `loopctl enable`.
 LOOP_MODE=dry-run     # dry-run: stage everything to pending. active: memories auto-write.
 
-# ── Reviewer (per session-end; mid-session top-up every N tool-calls) ─────────
+# ── Reviewer (SessionEnd + nightly harvest; mid-session top-up is opt-in) ─────
 REVIEW_EVERY_TURNS=0        # 0 = off (SessionEnd captures non-tool content anyway)
-REVIEW_EVERY_TOOLCALLS=20
+REVIEW_EVERY_TOOLCALLS=0    # 0 = off (default). The per-N-calls mid-session top-up is an OPT-IN knob — it's the rung-2 triage insertion point, not a shipped default (the $-per-N-calls cost shape ships dark).
 REVIEWER_MODEL=sonnet
 REVIEWER_EFFORT=high
 

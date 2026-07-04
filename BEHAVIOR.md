@@ -51,8 +51,10 @@ Injection is the push; the corpus is always **pullable** too. Plain `grep` over 
 (via the share-memory pointer) can read or query the same corpus — one index, many readers.
 
 ## The write side — how memories get made and kept
-You never hand-file a memory. A background **reviewer** runs at two moments — when a session closes and a
-nightly backstop — reading the session slice and proposing durable, non-obvious, reusable learnings. It judges
+You never hand-file a memory. A background **reviewer** runs when a session closes and again as a nightly
+backstop — reading the session slice and proposing durable, non-obvious, reusable learnings (a mid-session
+top-up every ~N tool calls is an opt-in knob, `REVIEW_EVERY_TOOLCALLS`, default 0 — the rung-2 triage
+insertion point, off so fresh installs don't ship the per-N-calls cost shape). It judges
 the slice **alone** against the `POLICY.md` capture bar and its exemplars; it does **not** browse the store (a
 blind A/B found store-browsing suppressed capture), so deduplication is the downstream job of the gatekeeper and
 gardener, not the reviewer. A deterministic gatekeeper (`materialize`) validates each proposal, rejects exact
