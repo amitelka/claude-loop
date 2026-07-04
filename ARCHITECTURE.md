@@ -190,15 +190,33 @@ three-phase adversarial review (design → instrument → inference).
 - **Shipped (implemented and live today):** write path (reviewer → gatekeeper → store), gardener
   + telemetry, skills track, measurement substrate (shadow logging, read telemetry, probes-CI,
   regret, tags contract, CI), peer-tool pointer surface.
-- **Landed and verified live, currently gated off:** hot/cold store split, the injection engine
-  (gate-runner; prompt-submit + subagent-spawn rows), capture-into-tier + POLICY interpolation —
-  all installed and exercised live (injection verified end-to-end). The loop's scheduled
-  automation is presently disabled by the operator on cost grounds and stays off until the two
-  hardening items below land; the injection (read) path is independent of that switch.
+- **Landed and verified live, currently gated off (operator cost decision):** hot/cold store split,
+  the injection engine (gate-runner; prompt-submit + subagent-spawn rows), capture-into-tier +
+  POLICY interpolation — all installed and exercised live (injection verified end-to-end). The
+  scheduled automation is disabled by the operator on cost grounds; the injection (read) path is
+  independent of that switch. Re-enable is now gated on the readiness steps below, not on missing
+  hardening.
+- **Hardening — SHIPPED + accepted (these were the re-enable blockers):** loop kill switch gates
+  every scheduled/detached entry point, not just the hooks (`b035e36`); gardener store-integrity
+  validate-then-commit + auto-restore — a failed or malformed run restores the pre-run snapshot and
+  never commits a partial mutation as HEAD (`d4dc8fd`); declared-actions intent contract — the
+  gardener declares its drops, validation fails closed on any undeclared/rule-typed drop (`8b261fd`);
+  xhigh hardening pass — traversal-safe index targets, fully-inert kill switch across all hooks,
+  declared-actions schema enforcement (`85f0c7f`).
+- **Safety invariant — untrusted-input denylist (`baefe25`):** every `claude -p` worker
+  (reviewer/gardener/miner) runs `--permission-mode bypassPermissions` on UNTRUSTED input (transcript
+  slices, memory bodies), which ignores `--allowedTools`; each therefore carries `--disallowedTools`
+  including Bash (the only headless gate against a prompt-injection steering a worker into a shell).
+  Contract-tested against new call-sites.
+- **Reviewer — slice-only (`0258f9f`):** the reviewer judges its transcript slice + the POLICY
+  capture bar/exemplars and does NOT browse the memory store. A blind A/B (26 slices) found
+  store-browsing *suppressed* capture; dedup correctness rests downstream on the gatekeeper's
+  exact-reject + the nightly gardener's near-dup merge.
 - **Pending a human sitting:** the rules graduation batch (memory → instruction layer).
-- **Hardening — blocks re-enabling the scheduled loop:** (1) gardener store-integrity validation
-  + auto-rollback — an LLM gardener editing the hot index directly can corrupt it, so a failed or
-  malformed run must auto-restore the pre-run snapshot and never commit a partial mutation as HEAD;
-  (2) the loop kill switch must gate the scheduled entry points too (see Safety & control).
+- **Re-enable readiness (the gate now):** reinstall from the repo FIRST (the live `~/.claude/loop`
+  is a copy install — hardening commits are repo-only until reinstalled); re-flip `gates.tsv` rows
+  1–2 → `live` after install (plain-copy install resets them to shadow); and bring the slice-only
+  reviewer live only with the gardener running nightly + a dup-rate monitor armed (dedup moved
+  downstream when the reviewer stopped browsing).
 - **Planned (Phase 3):** mid-turn gates (shadow-first, friction first), warm-start, search CLI,
-  per-turn injection cap; then the backlog's NEXT track.
+  per-turn injection cap; then the backlog's NEXT track (incl. skill-pointer injection).

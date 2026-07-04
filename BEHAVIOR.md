@@ -51,13 +51,15 @@ Injection is the push; the corpus is always **pullable** too. Plain `grep` over 
 (via the share-memory pointer) can read or query the same corpus — one index, many readers.
 
 ## The write side — how memories get made and kept
-You never hand-file a memory. A background **reviewer** runs at three moments — when a session closes, as a
-mid-session top-up every ~20 tool calls, and a nightly backstop — reading the session and proposing durable,
-non-obvious, reusable learnings; a deterministic gatekeeper (`materialize`) validates them, routes each to hot
-or cold by type, and writes the file. A nightly **gardener** dedups, tightens, prunes wrong content, and can
-promote a cold memory it judges broadly useful — every hot-budget move is logged. Both the reviewer and the
-gardener are governed by the same `POLICY.md`, interpolated into their prompts so the rules can't drift between
-them.
+You never hand-file a memory. A background **reviewer** runs at two moments — when a session closes and a
+nightly backstop — reading the session slice and proposing durable, non-obvious, reusable learnings. It judges
+the slice **alone** against the `POLICY.md` capture bar and its exemplars; it does **not** browse the store (a
+blind A/B found store-browsing suppressed capture), so deduplication is the downstream job of the gatekeeper and
+gardener, not the reviewer. A deterministic gatekeeper (`materialize`) validates each proposal, rejects exact
+duplicates, routes each to hot or cold by type, and writes the file. A nightly **gardener** merges
+near-duplicates, tightens, prunes wrong content, and can promote a cold memory it judges broadly useful — every
+hot-budget move is logged. Both the reviewer and the gardener are governed by the same `POLICY.md`, interpolated
+into their prompts so the rules can't drift between them.
 
 The loop **also** mines **skills** — memory is the primary output; skills are additional. From skill-usage telemetry and the memory corpus, a miner proposes
 new skills or patches to existing ones — **always staged** to a pending queue for you to review via
@@ -93,3 +95,4 @@ ones above — because the loop edits its own inputs; a reversible data write do
 - **Cry-wolf read-rate** (post-flip) — how often an injected pointer actually gets Read. Sustained decay means
   the channel is losing credibility and a precision lever should fire.
 - **Regret** — the gardener deleted a memory a later reviewer re-captured: a signal the deletion was wrong.
+- **Dup-rate** (armed at re-enable) — materialize exact-rejects + gardener near-dup merges vs baseline. Since the slice-only reviewer no longer dedups, a sustained ≥2× rise means the downstream dedup isn't absorbing the load the dropped browse-step used to prevent.
