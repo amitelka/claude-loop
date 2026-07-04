@@ -25,6 +25,17 @@ both move. Structure lives in `ARCHITECTURE.md`; thresholds and gates live in `l
 - A `feedback` memory is a RULE in staging: capture it, tier it hot, and flag it as a graduation candidate —
   rules belong in the instruction layer, not permanently in memory.
 
+### Exemplars
+The bar stays durable ∧ non-obvious ∧ reusable. To judge non-obvious, ask: did the SESSION teach this — would the next session re-derive it the hard way? Experience-grounded learnings clear it even if known-in-principle; pain is NOT required (quiet conclusions from reading/running count, and so do operator corrections) and pain alone is NOT enough (one-off blunders and transient state fail durable/reusable). At the margin, once durable + reusable are plausible, prefer capture over silence.
+GOOD:
+- `reference` — "`git add A B C` is all-or-nothing: one bad pathspec aborts the whole add and stages NOTHING; if you miss the fatal pathspec error, the next commit omits them". (Counter-to-expectation; recurs on any multi-file add.)
+- `reference` — "if the host's `grep` is ugrep, a pattern starting with `-` is parsed as an OPTION unless `--` precedes it — GNU-valid invocations then error". (Environment-local trap re-derived the hard way.)
+- `feedback` — "keep edits scoped to the task; no drive-by refactors in unrelated files". (How the operator wants work done → HOT + graduation candidate; a rule, not a fact.)
+DON'T CAPTURE:
+- "the test suite passed this run" — EPHEMERAL (only this conversation).
+- "this project uses <framework> for tests" — the REPO ALREADY RECORDS IT (derivable from code/CI). Capture only the non-obvious invocation gotcha (wrapper, env var, flaky flag), not the framework name.
+- "general knowledge merely RESTATED, not experienced — e.g. `git rebase` rewrites history, mentioned in passing, no incident behind it". (If it actually bit you, it IS capture-worthy.)
+
 ## Descriptions are retrieval documents (write-side)
 - The one-line description is both the injection payload and the retrieval surface. Phrase it by SYMPTOM and
   alias the vocabulary a future prompt would actually use — not a human-facing summary of the file.
