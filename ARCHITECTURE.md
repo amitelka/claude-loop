@@ -165,13 +165,21 @@ three-phase adversarial review (design → instrument → inference).
 
 - Both stores are git repositories; every mutation is snapshot-bracketed; `loopctl rollback` /
   `skill-rollback` revert.
-- Kill switches at three levels: loop, measurement, per-gate mode column. **Known gap (planned
-  fix):** `LOOP_ENABLED` currently gates the hook/injection path but not the scheduled entry
-  points (nightly gardener/harvest/miner) — they are invoked directly by the scheduler and don't
-  yet check it, so "loop off" must today be paired with unloading the schedule.
+- Kill switches at three levels: loop, measurement, per-gate mode column. `LOOP_ENABLED=0` is
+  **fully inert**: every hook AND every scheduled/detached entry point (gardener/harvest/miner)
+  exits early — no writes, no spend, no scheduled run — and `doctor` treats "schedule absent while
+  disabled" as coherent, not a warning.
 - `LOOP_REVIEWER=1` is the opt-out contract: every loop-internal or loop-adjacent `claude -p`
   (reviewer, gardener, miner, probes, backtests) exports it so hooks and telemetry ignore those
   sessions.
+- **Untrusted-input tool denylist:** the LLM workers (reviewer, gardener, miner) run `claude -p`
+  on UNTRUSTED input — transcript slices, memory bodies — under `--permission-mode
+  bypassPermissions`, which *ignores* `--allowedTools`. Each therefore carries an explicit
+  `--disallowedTools` denying Bash and the exec/exfil/spawn tools it never needs, so a
+  prompt-injection cannot steer a worker into a shell command. A denylist is the only lever the CLI
+  exposes headless (unlike a runtime-dispatch whitelist, which needs owning the loop) — so it must
+  be revisited when Claude Code adds tools; a contract test asserts every `claude -p` in `bin/`
+  carries it.
 - Skills never auto-install; instruction-layer edits (graduation) are human-gated; memory
   auto-write is mode-gated (`dry-run` stages everything).
 - `loopctl status | stats | doctor` is the operator surface; scheduled runs self-heal on

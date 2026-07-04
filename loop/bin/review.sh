@@ -42,7 +42,8 @@ raw="$(printf '%s' "$prompt" | claude -p \
   --add-dir "$CLAUDE_HOME" \
   --no-session-persistence \
   --output-format json \
-  --allowedTools Read Grep Glob Write 2>/dev/null)"
+  --allowedTools Read Grep Glob Write \
+  --disallowedTools Bash Edit Task WebFetch WebSearch NotebookEdit 2>/dev/null)"   # bypassPermissions IGNORES --allowedTools; the slice is UNTRUSTED input → a denylist is the only gate against Bash/exfil
 cost="$(printf '%s' "$raw" | jq -r 'if type=="array" then (map(select(.type=="result"))|last|.total_cost_usd) else (.total_cost_usd // empty) end' 2>/dev/null)"
 is_err="$(printf '%s' "$raw" | jq -r 'if type=="array" then (map(select(.type=="result"))|last|.is_error) else (.is_error // false) end' 2>/dev/null)"
 

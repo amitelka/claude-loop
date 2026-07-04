@@ -40,7 +40,8 @@ raw="$(printf '%s' "$prompt" | claude -p \
   --add-dir "$CLAUDE_HOME" \
   --no-session-persistence \
   --output-format json \
-  --allowedTools Read Write Edit Grep Glob 2>/dev/null)"
+  --allowedTools Read Write Edit Grep Glob \
+  --disallowedTools Bash Task WebFetch WebSearch NotebookEdit 2>/dev/null)"   # bypassPermissions IGNORES --allowedTools; memory bodies are UNTRUSTED input → denylist is the only gate (keeps Edit — the gardener needs it)
 rc=$?   # pipefail is set, so this is claude's exit status
 
 # Confirmed success requires ALL of: clean exit, parseable JSON, no API error reported, and a
