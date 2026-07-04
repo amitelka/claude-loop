@@ -171,6 +171,46 @@ validate_store() {  # $1=memdir  $2=pre_rev(optional)  $3=declared-actions.json(
   return 0
 }
 
+# Actuate the gardener's DECLARED deletes/merges (P1). The LLM has no delete tool (bash-vector denylist), so it
+# only DECLARES intent (declared-actions.json) + folds merged content into the target; this deterministic bash
+# removes each declared slug's index line + rm's its body, run BEFORE validate_store so a prune/merge actually
+# lands (validate_store then re-confirms observed==declared). VALIDATE-THE-DECLARATION-FIRST: bad schema /
+# rule-typed / over-ceiling / merge-into-nothing ⇒ abort with ZERO removal (fail-closed). Phantom (declared slug
+# not present) ⇒ WARN+skip, never abort. Bash-vector stays closed: bodies are rm'd ONLY from a schema+rule+ceiling
+# -validated declaration — a prompt-injection can at most DECLARE ≤ GARDEN_MAX_DROPS reference-class drops, rule
+# memories untouchable, full declared+git trail + regret backstop. $1=memdir $2=pre_rev $3=declared.json ;
+# echoes a reason + returns 1 on abort, 0 otherwise. Merge-FOLD content preservation is OUT of scope (2c tripwire).
+actuate_declared() {
+  local md="$1" pre="${2:-}" declared="${3:-}" slug act into rt n idx tmp IFS=$' \t\n'
+  local hot="$md/MEMORY.md" cold="$md/ARCHIVE.md"
+  [ -n "$declared" ] && [ -f "$declared" ] || return 0   # no declaration → in-place edits only; nothing to actuate
+  # SCHEMA — identical contract to validate_store: array; slug kebab; action deleted|merged; merged needs kebab `into`.
+  jq -e 'if type=="array" then all(.[]; ((.slug|type)=="string" and (.slug|test("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"))) and (.action=="deleted" or .action=="merged") and (.action!="merged" or ((.into|type)=="string" and (.into|test("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"))))) else false end' "$declared" >/dev/null 2>&1 || { echo "bad-declared-schema"; return 1; }
+  # CEILING on the DECLARED drop count (F2) — bound blast radius BEFORE touching anything.
+  n="$(jq '[.[]|select(.action=="deleted" or .action=="merged")]|length' "$declared" 2>/dev/null)"
+  [ "${n:-0}" -le "${GARDEN_MAX_DROPS:-3}" ] || { echo "too-many-declared:$n>${GARDEN_MAX_DROPS:-3}"; return 1; }
+  # PASS 1 — validate every entry, NO mutation: rule-typed rail (type from PRE-RUN snapshot) + merge-target-exists.
+  while IFS=$'\t' read -r slug act into; do
+    [ -n "$slug" ] || continue
+    rt="$(git -C "$md" show "$pre:$slug.md" 2>/dev/null | sed -n 's/^[[:space:]]*type:[[:space:]]*//p' | head -1)"
+    case "$rt" in user|feedback) echo "rule-typed-declared:$slug($rt)"; return 1;; esac
+    [ "$act" = merged ] && [ ! -f "$md/$into.md" ] && { echo "merge-into-missing:$slug->$into"; return 1; }
+  done < <(jq -r '.[]|select(.action=="deleted" or .action=="merged")|[.slug,.action,(.into//"")]|@tsv' "$declared" 2>/dev/null)
+  # PASS 2 — ACTUATE, idempotent delete-if-present: drop the index line from both indexes + rm the body. Phantom
+  # (body absent) = WARN+skip. Removals are working-tree only; post-garden mem_snapshot (git add -A) commits them.
+  while IFS=$'\t' read -r slug act into; do
+    [ -n "$slug" ] || continue
+    [ -f "$md/$slug.md" ] || { log "garden-actuate: declared $act '$slug' not present — skip (WARN)"; continue; }
+    for idx in "$hot" "$cold"; do
+      [ -f "$idx" ] || continue
+      tmp="$idx.actuate.$$"; grep -vF "](${slug}.md)" "$idx" > "$tmp" 2>/dev/null && mv "$tmp" "$idx"
+    done
+    rm -f "$md/$slug.md"
+    log "garden-actuate: $act '$slug'${into:+ into '$into'} — removed index line + body"
+  done < <(jq -r '.[]|select(.action=="deleted" or .action=="merged")|[.slug,.action,(.into//"")]|@tsv' "$declared" 2>/dev/null)
+  return 0
+}
+
 # Discard the memory-global working tree back to a committed snapshot, leaving NO untracked orphans, after
 # dumping a forensic patch (tracked diff vs pre + untracked bodies). Used by garden.sh + materialize.sh on a
 # failed/invalid run so corruption is NEVER committed as HEAD (the manual-rollback trap). reset --hard also

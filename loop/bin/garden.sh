@@ -61,9 +61,16 @@ fi
 [ -s "$digest" ]                || { ok=0; reason="${reason:+$reason,}no-digest"; }
 [ "${dmtime:-0}" -ge "$start" ] || { ok=0; reason="${reason:+$reason,}stale-digest"; }
 
+# DECLARED-ACTIONS ACTUATION (P1): the LLM gardener has no delete tool, so it only DECLARES prune/merge intent —
+# this deterministic bash actuates it (validate the declaration schema/rule-typed/ceiling/merge-target FIRST, then
+# rm index line + body), BEFORE validate_store, so the gardener can actually dedup/prune. A bad declaration aborts
+# with ZERO rm → joins the failure path → restore. Order is load-bearing: actuate strictly AFTER declaration-validate.
+[ "$ok" = 1 ] && { areason="$(actuate_declared "$MEMORY_DIR" "$pre_rev" "$declared")" || { ok=0; reason="${reason:+$reason,}actuate:$areason"; }; }
+
 # Content-integrity gate (validate-THEN-commit): even a clean-exit gardener can mangle the index or drop
 # memories. Validate the WORKING TREE against pre-garden BEFORE committing; a failure joins the rc/api/digest
-# failure path → auto-restore, never committing a partial mutation as HEAD (the manual-rollback trap).
+# failure path → auto-restore, never committing a partial mutation as HEAD (the manual-rollback trap). After
+# actuation, the declared drops are now OBSERVED here → observed==declared re-confirmed.
 [ "$ok" = 1 ] && { vreason="$(validate_store "$MEMORY_DIR" "$pre_rev" "$declared")" || { ok=0; reason="${reason:+$reason,}validate:$vreason"; }; }
 
 if [ "$ok" = 1 ]; then
