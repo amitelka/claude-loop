@@ -19,7 +19,10 @@ case "$cmd" in
     echo "schedule:"; ls "$HOME"/Library/LaunchAgents/io.claudeloop.*.plist 2>/dev/null | sed 's/^/  /' || echo "  (none installed)"
     echo "recent log: ($LOG)"; tail -n 6 "$LOG" 2>/dev/null | sed 's/^/  /'
     ;;
-  enable)  set_cfg LOOP_ENABLED 1; echo "loop enabled";;
+  enable)  set_cfg LOOP_ENABLED 1; echo "loop enabled"
+    if [ "${REVIEW_EVERY_TOOLCALLS:-0}" -gt 0 ]; then
+      echo "  mid-session review: every ${REVIEW_EVERY_TOOLCALLS} tool calls (opt out: REVIEW_EVERY_TOOLCALLS=0 in config.local.sh)"
+    else echo "  mid-session review: off — capture at SessionEnd + nightly harvest only"; fi;;
   disable) set_cfg LOOP_ENABLED 0; echo "loop disabled";;
   mode)
     case "${1:-}" in

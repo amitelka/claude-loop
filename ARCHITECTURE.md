@@ -61,9 +61,10 @@ the type determines where it lives and how it reaches a session:
 
 ## Write path
 
-1. **Reviewer** (cheap model; fires on SessionEnd via the Stop hook and from a nightly harvest
-   backstop — a mid-session top-up per ~N tool calls is an opt-in knob, `REVIEW_EVERY_TOOLCALLS`,
-   default 0, the rung-2 triage insertion point) extracts durable facts from transcripts *into a tier*: reference
+1. **Reviewer** (cheap model; fires on SessionEnd via the Stop hook, from a nightly harvest
+   backstop, and a mid-session top-up every ~30 tool calls (`REVIEW_EVERY_TOOLCALLS`, default 30,
+   opt out =0) — all gated by `LOOP_ENABLED`, so install never spends; rung-2 triage will make the
+   top-up near-free) extracts durable facts from transcripts *into a tier*: reference
    born cold with retrieval-grade (symptom-phrased, aliased) descriptions; rules flagged as
    graduation candidates; knowledge the repo already records is excluded.
 2. **Gatekeeper** (`materialize.sh`, deterministic) validates, secret-scans, dedups, detects
