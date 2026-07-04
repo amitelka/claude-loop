@@ -199,18 +199,18 @@ three-phase adversarial review (design → instrument → inference).
   independent of that switch. Re-enable is now gated on the readiness steps below, not on missing
   hardening.
 - **Hardening — SHIPPED + accepted (these were the re-enable blockers):** loop kill switch gates
-  every scheduled/detached entry point, not just the hooks (`b035e36`); gardener store-integrity
+  every scheduled/detached entry point, not just the hooks (`accdf98`); gardener store-integrity
   validate-then-commit + auto-restore — a failed or malformed run restores the pre-run snapshot and
-  never commits a partial mutation as HEAD (`d4dc8fd`); declared-actions intent contract — the
-  gardener declares its drops, validation fails closed on any undeclared/rule-typed drop (`8b261fd`);
+  never commits a partial mutation as HEAD (`ba30d1f`); declared-actions intent contract — the
+  gardener declares its drops, validation fails closed on any undeclared/rule-typed drop (`b4892d7`);
   xhigh hardening pass — traversal-safe index targets, fully-inert kill switch across all hooks,
-  declared-actions schema enforcement (`85f0c7f`).
-- **Safety invariant — untrusted-input denylist (`baefe25`):** every `claude -p` worker
+  declared-actions schema enforcement (`6286d23`).
+- **Safety invariant — untrusted-input denylist (`9bd7b9e`):** every `claude -p` worker
   (reviewer/gardener/miner) runs `--permission-mode bypassPermissions` on UNTRUSTED input (transcript
   slices, memory bodies), which ignores `--allowedTools`; each therefore carries `--disallowedTools`
   including Bash (the only headless gate against a prompt-injection steering a worker into a shell).
   Contract-tested against new call-sites.
-- **Reviewer — slice-only (`0258f9f`):** the reviewer judges its transcript slice + the POLICY
+- **Reviewer — slice-only (`5e8dd91`):** the reviewer judges its transcript slice + the POLICY
   capture bar/exemplars and does NOT browse the memory store. A blind A/B (26 slices) found
   store-browsing *suppressed* capture; dedup correctness rests downstream on the gatekeeper's
   exact-reject + the nightly gardener's near-dup merge.
