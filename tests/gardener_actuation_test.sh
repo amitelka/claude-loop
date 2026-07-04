@@ -106,4 +106,50 @@ d="$(mkdecl '[{"slug":"ghostslug","action":"deleted"}]')"; r="$(ad "$pre" "$d")"
 ok "$arc" 0 "T8 phantom (never-existed) declared → ok (warn+skip, no abort)"
 ok "$(fpresent c1)/$(fpresent h1)" "yes/yes" "T8 real slugs intact"
 
+# T9-T12 MERGE-GRAPH invariants (P1-2): schema-valid-but-graph-broken declarations must abort with ZERO rm.
+build_store; pre="$(mhead)"
+r="$(ad "$pre" "$(mkdecl '[{"slug":"c1","action":"merged","into":"c1"}]')")"; ok "$?" 1 "T9 self-merge → abort"; ok "$(fpresent c1)" yes "T9 c1 untouched"
+r="$(ad "$pre" "$(mkdecl '[{"slug":"c1","action":"deleted"},{"slug":"c1","action":"merged","into":"c2"}]')")"; ok "$?" 1 "T10 duplicate slug → abort"; ok "$(fpresent c1)" yes "T10 c1 untouched"
+r="$(ad "$pre" "$(mkdecl '[{"slug":"c1","action":"merged","into":"c2"},{"slug":"c2","action":"deleted"}]')")"; ok "$?" 1 "T11 A→B + B deleted (survivor vanishes) → abort"; ok "$(fpresent c1)/$(fpresent c2)" "yes/yes" "T11 both untouched"
+r="$(ad "$pre" "$(mkdecl '[{"slug":"c1","action":"merged","into":"c2"},{"slug":"c2","action":"merged","into":"c3"}]')")"; ok "$?" 1 "T12 A→B→C with B dropped → abort (into∈drop-set)"; ok "$(fpresent c1)/$(fpresent c2)" "yes/yes" "T12 both untouched"
+
+# T13 UNTYPED PRE-SLUG fail-closed (P2-1): a pre-existing slug with unparseable frontmatter type declared deleted → abort.
+build_store; printf -- '---\nname: u1\n---\nbody u1\n' > "$memdir/u1.md"; echo "- [u1](u1.md) — desc u1" >> "$memdir/ARCHIVE.md"
+git -C "$memdir" -c user.email=t@t -c user.name=t add -A >/dev/null; git -C "$memdir" -c user.email=t@t -c user.name=t commit -q -m u1; pre="$(mhead)"
+r="$(ad "$pre" "$(mkdecl '[{"slug":"u1","action":"deleted"}]')")"; arc=$?
+ok "$arc" 1 "T13 untyped pre-slug declared deleted → abort"
+ok "$(has "$r" untyped-pre-slug)" yes "T13 reason=untyped-pre-slug"
+ok "$(fpresent u1)" yes "T13 u1 untouched (zero rm)"
+
+# ── garden.sh flow: dry-run bypass (P1-1) + actuation-failure restore/artifacts (P2-2) ──
+echo "── garden.sh actuation flow ──"
+sig(){ find "$memdir" -type f -not -path '*/.git/*' 2>/dev/null | LC_ALL=C sort | xargs shasum 2>/dev/null | shasum | awk '{print $1}'; }
+sbin="$tmp/stubbin"; mkdir -p "$sbin"
+cat > "$sbin/claude" <<'STUB'
+#!/usr/bin/env bash
+prompt="$(cat)"; store="$CLAUDE_CONFIG_DIR/memory-global"
+digest="$(printf '%s' "$prompt" | tr '`' '\n' | grep -oE '^/[^ ]*garden-[0-9][0-9-]*\.md$' | head -1)"
+declared="$(printf '%s' "$prompt" | tr '`' '\n' | grep -oE '^/[^ ]*garden-declared-[0-9][0-9-]*\.json$' | head -1)"
+case "${GARDEN_TEST_SCENARIO:-}" in
+  declare-only) printf '[{"slug":"c1","action":"deleted","reason":"stale"}]' > "$declared"; echo done > "$digest"; echo '{"is_error":false}'; exit 0;;   # LLM only DECLARES (it can't rm); bash actuates in active
+  declare-plus-undeclared) printf '[{"slug":"c1","action":"deleted","reason":"stale"}]' > "$declared"; grep -v '(c2.md)' "$store/ARCHIVE.md" > "$store/.a" && mv "$store/.a" "$store/ARCHIVE.md"; echo done > "$digest"; echo '{"is_error":false}'; exit 0;;   # declares c1; ALSO drops c2's index line UNDECLARED
+  *) echo '{"is_error":false}'; exit 0;;
+esac
+STUB
+chmod +x "$sbin/claude"
+rg(){ GARDEN_TEST_SCENARIO="$1" PATH="$sbin:$PATH" bash "$L/bin/garden.sh" >/dev/null 2>&1; }
+
+# T14 DRY-RUN BYPASS: identical declared delete → dry-run leaves c1 (no actuation); active removes it.
+build_store; printf 'LOOP_ENABLED=1\nLOOP_MODE=dry-run\n' > "$L/config.local.sh"; rm -f "$L/state/garden.fail" "$L/state/garden.success"; rg declare-only
+ok "$(fpresent c1)" yes "T14 dry-run + declared delete → c1 UNCHANGED (actuation skipped)"
+build_store; printf 'LOOP_ENABLED=1\nLOOP_MODE=active\n' > "$L/config.local.sh"; rm -f "$L/state/garden.fail" "$L/state/garden.success"; rg declare-only
+ok "$(fpresent c1)" no "T14 active + same declaration → c1 actuated (removed)"
+
+# T15 ACTUATION-FAILURE RESTORE + ARTIFACTS: actuate c1, but an UNDECLARED c2 index drop → validate fails → restore.
+build_store; printf 'LOOP_ENABLED=1\nLOOP_MODE=active\n' > "$L/config.local.sh"; pre="$(mhead)"; s0="$(sig)"; rm -f "$L/state/garden.fail"; rg declare-plus-undeclared
+ok "$(mhead)" "$pre" "T15 undeclared drop post-actuation → RESTORED to pre (HEAD unchanged)"
+ok "$(sig)" "$s0" "T15 store byte-identical to pre (c1+c2 back)"
+ok "$(ls "$L/log/garden-FAILED-"*.patch >/dev/null 2>&1 && echo yes || echo no)" yes "T15 forensic patch survives"
+ok "$(grep -lF 'declared-actions.json' "$L/log/garden-FAILED-"*.patch >/dev/null 2>&1 && echo yes || echo no)" yes "T15 declared file folded into patch"
+
 exit "$rc"

@@ -151,14 +151,14 @@ validate_store() {  # $1=memdir  $2=pre_rev(optional)  $3=declared-actions.json(
       # declared-actions SCHEMA enforcement (P1): top-level array; each entry slug∈kebab, action∈{deleted,merged},
       # `into` (kebab) required when merged. Malformed / non-array / invalid entry ⇒ treat file as MISSING (fail-closed per F3).
       decl=""
-      if [ -n "$declared" ] && jq -e 'if type=="array" then all(.[]; ((.slug|type)=="string" and (.slug|test("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"))) and (.action=="deleted" or .action=="merged") and (.action!="merged" or ((.into|type)=="string" and (.into|test("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"))))) else false end' "$declared" >/dev/null 2>&1; then
+      if [ -n "$declared" ] && declared_schema_valid "$declared"; then   # schema + merge-graph (shared contract, can't drift)
         decl="$(jq -r '.[].slug' "$declared" 2>/dev/null | LC_ALL=C sort -u)"
       fi
       while IFS= read -r slug; do   # newline-safe iteration
         [ -n "$slug" ] || continue
         printf '%s\n' "$decl" | grep -qxF "$slug" || { echo "undeclared-drop:$slug"; return 1; }
         rt="$(git -C "$md" show "$pre:$slug.md" 2>/dev/null | sed -n 's/^[[:space:]]*type:[[:space:]]*//p' | head -1)"
-        case "$rt" in user|feedback) echo "rule-typed-drop:$slug($rt)"; return 1;; esac
+        case "$rt" in user|feedback) echo "rule-typed-drop:$slug($rt)"; return 1;; "") echo "untyped-pre-slug:$slug"; return 1;; esac   # P2-1: dropped slug existed pre-run; unparseable type ⇒ fail-closed
       done <<< "$drops"
       if [ -n "$decl" ]; then   # declared-but-not-observed → harmless WARN (said it would delete X, didn't)
         while IFS= read -r slug; do
@@ -171,29 +171,53 @@ validate_store() {  # $1=memdir  $2=pre_rev(optional)  $3=declared-actions.json(
   return 0
 }
 
+# Shared declared-actions schema + MERGE-GRAPH validity — used by BOTH actuate_declared and validate_store so the
+# contract can't drift. Enforces: top-level array; NO duplicate .slug; each slug kebab; action deleted|merged;
+# merged ⇒ `into` kebab AND into≠slug (no self-merge) AND into ∉ the declared-slug set (the survivor must survive —
+# kills [A merged→B, B deleted], and chains A→B→C where B is itself dropped). $1=declared.json. 0 iff valid.
+declared_schema_valid() {
+  jq -e '
+    if type=="array" then
+      ([.[].slug]) as $s
+      | ($s|length) == ($s|unique|length)
+      and all(.[];
+          ((.slug|type)=="string" and (.slug|test("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")))
+          and (.action=="deleted" or .action=="merged")
+          and (.action!="merged" or (
+                (.into|type)=="string" and (.into|test("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"))
+                and (.into != .slug)
+                and ((.into) as $i | ($s|index($i)) == null)
+              )))
+    else false end' "$1" >/dev/null 2>&1
+}
+
 # Actuate the gardener's DECLARED deletes/merges (P1). The LLM has no delete tool (bash-vector denylist), so it
 # only DECLARES intent (declared-actions.json) + folds merged content into the target; this deterministic bash
 # removes each declared slug's index line + rm's its body, run BEFORE validate_store so a prune/merge actually
-# lands (validate_store then re-confirms observed==declared). VALIDATE-THE-DECLARATION-FIRST: bad schema /
-# rule-typed / over-ceiling / merge-into-nothing ⇒ abort with ZERO removal (fail-closed). Phantom (declared slug
-# not present) ⇒ WARN+skip, never abort. Bash-vector stays closed: bodies are rm'd ONLY from a schema+rule+ceiling
-# -validated declaration — a prompt-injection can at most DECLARE ≤ GARDEN_MAX_DROPS reference-class drops, rule
-# memories untouchable, full declared+git trail + regret backstop. $1=memdir $2=pre_rev $3=declared.json ;
-# echoes a reason + returns 1 on abort, 0 otherwise. Merge-FOLD content preservation is OUT of scope (2c tripwire).
+# lands (validate_store then re-confirms observed==declared). CALLED ONLY IN active MODE (garden.sh gates it; dry-run
+# must change nothing). VALIDATE-THE-DECLARATION-FIRST: bad schema/merge-graph / rule-typed / untyped-pre-slug /
+# over-ceiling / merge-into-nothing ⇒ abort with ZERO removal (fail-closed). Phantom (declared slug not present) ⇒
+# WARN+skip. Bash-vector stays closed: bodies rm'd ONLY from a validated declaration — an injection can at most
+# DECLARE ≤ GARDEN_MAX_DROPS reference-class drops, rule/untyped-pre memories untouchable, full declared+git trail.
+# $1=memdir $2=pre_rev $3=declared.json ; echoes a reason + returns 1 on abort. Merge-FOLD quality is OUT of scope (2c).
 actuate_declared() {
   local md="$1" pre="${2:-}" declared="${3:-}" slug act into rt n idx tmp IFS=$' \t\n'
   local hot="$md/MEMORY.md" cold="$md/ARCHIVE.md"
   [ -n "$declared" ] && [ -f "$declared" ] || return 0   # no declaration → in-place edits only; nothing to actuate
-  # SCHEMA — identical contract to validate_store: array; slug kebab; action deleted|merged; merged needs kebab `into`.
-  jq -e 'if type=="array" then all(.[]; ((.slug|type)=="string" and (.slug|test("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"))) and (.action=="deleted" or .action=="merged") and (.action!="merged" or ((.into|type)=="string" and (.into|test("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"))))) else false end' "$declared" >/dev/null 2>&1 || { echo "bad-declared-schema"; return 1; }
-  # CEILING on the DECLARED drop count (F2) — bound blast radius BEFORE touching anything.
-  n="$(jq '[.[]|select(.action=="deleted" or .action=="merged")]|length' "$declared" 2>/dev/null)"
+  declared_schema_valid "$declared" || { echo "bad-declared-schema"; return 1; }   # schema + merge-graph (dup/self/into∉drops)
+  # CEILING on the DECLARED drop count (F2), UNIQUE slugs (dup rejected above → == length) — bound blast radius first.
+  n="$(jq '[.[]|select(.action=="deleted" or .action=="merged")|.slug]|unique|length' "$declared" 2>/dev/null)"
   [ "${n:-0}" -le "${GARDEN_MAX_DROPS:-3}" ] || { echo "too-many-declared:$n>${GARDEN_MAX_DROPS:-3}"; return 1; }
-  # PASS 1 — validate every entry, NO mutation: rule-typed rail (type from PRE-RUN snapshot) + merge-target-exists.
+  # PASS 1 — validate every entry, NO mutation: rule/untyped rail (from PRE-RUN snapshot) + merge-target-exists.
   while IFS=$'\t' read -r slug act into; do
     [ -n "$slug" ] || continue
-    rt="$(git -C "$md" show "$pre:$slug.md" 2>/dev/null | sed -n 's/^[[:space:]]*type:[[:space:]]*//p' | head -1)"
-    case "$rt" in user|feedback) echo "rule-typed-declared:$slug($rt)"; return 1;; esac
+    if git -C "$md" cat-file -e "$pre:$slug.md" 2>/dev/null; then   # existed PRE-RUN → the rule rail applies
+      rt="$(git -C "$md" show "$pre:$slug.md" 2>/dev/null | sed -n 's/^[[:space:]]*type:[[:space:]]*//p' | head -1)"
+      case "$rt" in
+        user|feedback) echo "rule-typed-declared:$slug($rt)"; return 1;;
+        "") echo "untyped-pre-slug:$slug"; return 1;;   # P2-1: can't confirm it's safe to delete → fail-closed
+      esac
+    fi   # else: new-this-run slug → not a pre-run drop → deletion allowed
     [ "$act" = merged ] && [ ! -f "$md/$into.md" ] && { echo "merge-into-missing:$slug->$into"; return 1; }
   done < <(jq -r '.[]|select(.action=="deleted" or .action=="merged")|[.slug,.action,(.into//"")]|@tsv' "$declared" 2>/dev/null)
   # PASS 2 — ACTUATE, idempotent delete-if-present: drop the index line from both indexes + rm the body. Phantom
