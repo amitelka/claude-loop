@@ -55,5 +55,17 @@ DON'T CAPTURE:
   retain every distinctive token from the originals — those tokens are the retrieval surface.
 - **Tightening keeps tokens too.** Shortening an index line or description must preserve the retrieval tokens;
   compression that drops them trades recall for bytes.
+- **Retiring as "already encoded" diffs MEANING, not existence.** A rule that exists in the instruction layer
+  only as a general gist, missing the memory's specific bite, is not encoded yet — require clause-level coverage
+  before the store copy retires.
+- **Graduation is a move to exactly ONE home.** A rule graduating to the instruction layer goes to the global
+  layer (CLAUDE.md / output style) OR stays skill-local — never both: a skill already runs under the global
+  instructions, so carrying the rule twice is the double-carry that "move, don't copy" exists to prevent.
+  Skill-workflow-specific rules stay skill-local; universal rules take the broader home. Same one-home test
+  for every graduating rule.
+- **Drifting facts keep one dated "Current X:" line.** A memory tracking a value that drifts (IP, port,
+  version, expiry) maintains a single canonical `Current <thing>: <value> (as of <date>)` line at the top,
+  overwritten in place when the value changes or is found stale — never an accreting "most recently seen /
+  earlier" history trail in prose.
 - **Hot-budget moves are audited.** A cold→hot promotion (or any demotion outside the one-time migration) is a
   gardener action, logged to the actions sidecar (`action=promoted`/`demoted`) — hot is the one contended tier.
