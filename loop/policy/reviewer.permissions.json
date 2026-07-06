@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Write(//@@LH@@/proposals/**)",
+      "Edit(//@@LH@@/proposals/**)"
+    ]
+  }
+}

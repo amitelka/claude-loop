@@ -6,7 +6,7 @@
 # marker proves inertness; the enabled + manual arms prove the guard does not over-block). No private corpus.
 set -uo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+. "$(dirname "$0")/_setup.sh"
 rc=0
 ok(){ if [ "$1" = "$2" ]; then echo "  ok    $3"; else echo "  FAIL  $3 (got '$1' want '$2')"; rc=1; fi; }
 has(){ case "$1" in *"$2"*) echo yes;; *) echo no;; esac; }
@@ -15,9 +15,16 @@ present(){ [ -e "$1" ] && echo yes || echo no; }
 CLAUDE_CONFIG_DIR="$tmp" bash "$repo/claude-loop" install >/dev/null 2>&1 || { echo "  FAIL  claude-loop install errored"; exit 1; }
 export CLAUDE_CONFIG_DIR="$tmp"
 L="$tmp/loop"
-mkdir -p "$tmp/memory-global"
-git -C "$tmp/memory-global" init -q 2>/dev/null
-git -C "$tmp/memory-global" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base 2>/dev/null
+mkdir -p "$LOOP_HOME/memory-global"
+# a VALID store (both index tiers + a body each): garden's #16 pre-spend backstop now refuses to spend on an
+# INVALID/empty store, so to isolate the kill-switch guard the store must be valid here (not a bare empty commit).
+printf -- '---\nname: ks-hot\nmetadata:\n  type: feedback\n---\nx\n' > "$LOOP_HOME/memory-global/ks-hot.md"
+printf -- '---\nname: ks-cold\nmetadata:\n  type: reference\n---\nx\n' > "$LOOP_HOME/memory-global/ks-cold.md"
+printf -- '- [ks-hot](ks-hot.md) — hot\n'  > "$LOOP_HOME/memory-global/MEMORY.md"
+printf -- '- [ks-cold](ks-cold.md) — cold\n' > "$LOOP_HOME/memory-global/ARCHIVE.md"
+git -C "$LOOP_HOME/memory-global" init -q 2>/dev/null
+git -C "$LOOP_HOME/memory-global" -c user.email=t@t -c user.name=t add -A 2>/dev/null
+git -C "$LOOP_HOME/memory-global" -c user.email=t@t -c user.name=t commit -q -m base 2>/dev/null
 
 # stub `claude` = the SPEND instrument (all entry points call bare `claude`, PATH-resolved, inherited by children)
 sbin="$tmp/stubbin"; mkdir -p "$sbin"; spend="$tmp/claude-was-called"
@@ -34,7 +41,7 @@ done
 echo "  ok    preflight: MEMORY_DIR/STATE_DIR/LOG all under the temp root"
 mkdir -p "$(dirname "$P_LOG")" "$P_STATE"
 state_sig(){ find "$P_STATE" -type f 2>/dev/null | LC_ALL=C sort | shasum | awk '{print $1}'; }
-memhead(){ git -C "$tmp/memory-global" rev-parse HEAD 2>/dev/null; }
+memhead(){ git -C "$LOOP_HOME/memory-global" rev-parse HEAD 2>/dev/null; }
 skipc(){ grep -c "$1: skip: LOOP_ENABLED=0" "$P_LOG" 2>/dev/null | tr -d ' '; }
 
 # ── PART 1 — BEHAVIORAL: LOOP_ENABLED=0 → each autonomous entry point is inert ──

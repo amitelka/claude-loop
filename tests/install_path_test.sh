@@ -5,7 +5,7 @@
 # file place() never installs" — the class that bit gates.tsv and tags.sh. Public-safe (no private data).
 set -uo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+. "$(dirname "$0")/_setup.sh"
 rc=0; ok(){ if [ "$1" = "$2" ]; then echo "  ok    $3"; else echo "  FAIL  $3 (got '$1' want '$2')"; rc=1; fi; }
 
 # seed a stale pre-absorption on-shadow.sh hook → proves merge_hooks REMOVES it on upgrade (not just "fresh didn't add it")

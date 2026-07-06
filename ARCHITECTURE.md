@@ -1,8 +1,9 @@
 # Architecture
 
-High-level design of claude-loop: a self-improving memory + skills loop built natively on Claude
-Code (hooks, `claude -p`, markdown, git). This file is the stable reference; day-to-day priorities
-and open decisions live in `backlog.md` (untracked working notes).
+High-level design of claude-loop: a self-improving memory + skills loop — markdown, git, and
+deterministic shell at the core, LLM calls only where judgment is required, driven by a harness
+adapter (Claude Code is adapter #1; see the driver contract below). This file is the stable
+reference; day-to-day priorities and open decisions live in `backlog.md` (untracked working notes).
 
 Scope: this file defines **structure** — components, flows, invariants. **Behavior** lives one
 layer down, versioned alongside it: judgment in the prompts (`loop/prompts/` — capture bar, tier
@@ -31,17 +32,61 @@ returns via retrieval. The unbounded class never consumes the bounded resource.
                                           │        ├─── pull: grep / Read · search CLI (planned)
                                           ▼        └─── peer tools: pointer file (discovery)
                      memory store (markdown + git, typed tiers)
+                                     ▲    ▲
+   peer agents / human ──► direct file writes — reconciled by INGRESS at every loop entry
                                           ▲
                                  gardener (LLM, nightly + presence self-heal)
                                  skill miner (LLM, scheduled, human-gated)
 ```
 
+## Homes — what lives where, who may write it
+
+| Home | Contents | Written by |
+|---|---|---|
+| `LOOP_HOME` (`~/.claude-loop`) | machinery (`bin/ lib.sh hooks/ prompts/ policy/`) · the store (`memory-global/`) · worker-writable state (`proposals/ pending/ state/` — incl. quarantine + materialized profiles — `log/ archive/`) | loop bash; LLM workers only within their platform-scoped profile; peers write the store directly (ingress reconciles) |
+| `~/.claude` | `settings.json` (hook registration + `autoMemoryDirectory` → the relocated store) · installed `skills/` (real copies) | operator + deterministic install steps ONLY — the platform protects `~/.claude` from every worker in every non-bypass mode |
+
+**Driver-agnostic core, Claude as adapter #1:** the store, ingress, gatekeeper, validation, and
+index/scorer know nothing about which harness drives them. Everything Claude-specific — permission
+profiles, spawn flags, the hooks surface, settings repointing — lives behind one `worker_spawn` seam
+(lib.sh) plus the install adapter. Adding a driver (e.g. Codex `exec`) means **implementing an
+interface**, not editing the three worker flows. The driver contract — what any adapter must provide:
+
+- **Spawn**: `worker_spawn <worker> <model> <effort> <tools-allowlist> <denylist> [extra read-dirs]`,
+  prompt on stdin → the driver's JSON result on stdout (the Claude adapter emits `--output-format
+  json`, an object-or-array result the workers parse; a new adapter defines its own result shape
+  and the seam normalizes), non-zero rc on driver failure.
+- **Write scoping (the load-bearing guarantee)**: the spawned worker can write ONLY its per-worker
+  scope (reviewer/miner → `proposals/`; gardener → `memory-global/**` + `log/garden-*`, `.git`
+  denied) — enforced by the *driver's* mechanism (Claude: materialized permission profiles,
+  byte-exact-verified at spawn; another driver: its own sandbox/policy equivalent). The core does
+  not re-check writes; this guarantee is what the tripwire and ingress designs assume.
+- **Read access**: the driver must ensure the worker can read `LOOP_HOME` (+ any extra dirs
+  passed). Any *additional* implicit read surfaces the driver's harness grants must be documented
+  and covered by that driver's receipts — read-scope exclusivity is NOT established by the core.
+- **Evidence**: the enforcement claim must be receipt-backed by that driver's own live probes
+  (in-scope artifact CREATED / out-of-scope ABSENT per worker shape) before it carries the loop —
+  the Claude adapter's receipts live in the probe evidence file; a new adapter brings its own.
+- **Non-interference**: the driver must not write the operator's protected harness-config surfaces,
+  and must not set environment that changes credential resolution for sibling processes (see
+  *Operational lessons* in `docs/decisions/de-bypass-relocation.md`).
+
+What stays OUTSIDE the contract (core, driver-blind): ingress, the gatekeeper + exit contract,
+`validate_store`, locks, the tripwire zones, quarantine, watermarks, the scorer.
+(Decision record: `docs/decisions/de-bypass-relocation.md`.)
+
 ## Memory store
 
 One fact per file, YAML frontmatter, in a dedicated git repository. Every memory is typed, and
-the type determines where it lives and how it reaches a session:
+the type determines where it lives and how it reaches a session. Two vocabularies, deliberately:
+the table below is the **conceptual class** (how to think about a memory's lifecycle); the actual
+frontmatter enum — what the gatekeeper accepts and the ingress router routes on — is exactly
+**`user | feedback | project | reference`** (`feedback`/`user` → hot `MEMORY.md`;
+`project`/`reference` → cold `ARCHIVE.md`). Mapping: rule ≈ `feedback`/`user` (hot, graduation
+candidates); active state ≈ `project`; reference/archival ≈ `reference` (cold; "archival" is a
+lifecycle stage, not a type):
 
-| Type | What | Home | Reaches a session via |
+| Conceptual class | What | Home | Reaches a session via |
 |---|---|---|---|
 | rule | how the agent should behave, applies every turn | instruction layer (CLAUDE.md / output style); memory is only a staging area | always-on instructions, after **graduation** |
 | active state (project-class) | in-flight project facts | cold store | retriever; warm-start **(planned)**; expiry via resolution — a `review_after` field is **(planned)** |
@@ -61,10 +106,10 @@ the type determines where it lives and how it reaches a session:
 
 ## Write path
 
-1. **Reviewer** (cheap model; fires on SessionEnd via the Stop hook, from a nightly harvest
-   backstop, and a mid-session top-up every ~30 tool calls (`REVIEW_EVERY_TOOLCALLS`, default 30,
-   opt out =0) — all gated by `LOOP_ENABLED`, so install never spends; rung-2 triage will make the
-   top-up near-free) extracts durable facts from transcripts *into a tier*: reference
+1. **Reviewer** (cheap model; fires from the SessionEnd hook, from the Stop hook's thresholded
+   mid-session top-up every ~30 tool calls (`REVIEW_EVERY_TOOLCALLS`, default 30, opt out =0), and
+   from the nightly harvest backstop — all gated by `LOOP_ENABLED`, so install never spends;
+   rung-2 triage will make the top-up near-free) extracts durable facts from transcripts *into a tier*: reference
    born cold with retrieval-grade (symptom-phrased, aliased) descriptions; rules flagged as
    graduation candidates; knowledge the repo already records is excluded.
 2. **Gatekeeper** (`materialize.sh`, deterministic) validates, secret-scans, dedups, detects
@@ -78,6 +123,49 @@ the type determines where it lives and how it reaches a session:
 4. **Graduation**: rules move (never copy) into the instruction layer after a meaning-level diff
    confirms the full bite of the rule is encoded; the memory file is then retired. One home per
    rule — a skill inherits global instructions, so skill + CLAUDE.md double-carry is forbidden.
+
+The gatekeeper returns a four-way **exit contract** — `landed / clean-noop / deferred / failed` —
+and the reviewer advances its per-session **watermark** (how far into the transcript has been
+reviewed; both the Stop path and the nightly harvest resume from it) only on the first two. A
+deferral or failure leaves the watermark alone, so the same slice is retried at the next trigger:
+a miss is always a *delay*, never a silent loss.
+
+## External writes — ingress (peers as first-class producers)
+
+The store is not loop-private. Peer agents on the machine — and the human — write memory files
+straight into `memory-global/` with no protocol and no locks; that is an expected, first-class
+input, not an anomaly. The loop's side of the contract:
+
+- **Reconcile-at-entry:** at every store-mutating entry (review, gatekeeper, gardener), under the
+  store lock, the working tree is compared against git HEAD *before the loop does anything*.
+  Anything dirty is by definition external. HEAD is never rewritten — it only advances.
+- **Deterministic per-slug validation + the type router:** a valid body is source of truth,
+  kept byte-identical; its index pointer is *placed* by the declared frontmatter `type`
+  (feedback/user → hot, project/reference → cold). The router does **no semantic judgment** —
+  missing, non-enum, or conflicting type = broken; a semantically wrong-but-valid type is the
+  nightly gardener's problem. Existing pointer prose (operator-curated) is never rewritten:
+  correct tier → untouched; wrong tier → the line moves verbatim; only a pointer that exists
+  nowhere is generated from the description.
+- **Broken files are parked, never lost:** the dirty content is copied to quarantine
+  (`state/quarantine/`, outside every validated/guarded dir; `doctor` shows a count) and, if the
+  file was tracked, the last good version is restored from HEAD — so one bad file can never wedge
+  the store or poison other sessions (the incident class that motivated all of this).
+- **Deletions are never honored:** a deleted body or index line is restored from HEAD and the
+  attempt recorded. Deletion authority belongs to the gardener alone, via its declared-actions
+  contract — so rule-typed memories cannot be removed by anything but human graduation.
+- **Green validation → own commit:** the reconciled result lands as its own
+  `external-memory-ingress` commit before any loop write — external contributions get durability
+  and attribution separate from loop commits, and `validate_store` remains the fail-closed
+  predicate on every commit. The invariant survives: **HEAD is always valid.**
+- **Windows aren't special:** a valid body that appears in the store *during* a worker's model
+  window is the same case — the workers themselves cannot write the store (platform-scoped), so
+  any in-window store writer is external, and it is ingested first-class at the next entry rather
+  than reverted.
+- **Locks are short:** the reviewer holds the store lock only for entry-ingress (+ skips before
+  the model spend if the store is busy); the gatekeeper re-ingests and re-validates immediately
+  before writing; the gardener holds for its full run; the miner holds while reading its corpus.
+  Lock staleness is pid-liveness (`kill -0`), not wall-clock; **no mtime/wall-clock input exists
+  anywhere in ingress** — detection is git state and content hashes only.
 
 ## Read path
 
@@ -171,17 +259,39 @@ three-phase adversarial review (design → instrument → inference).
   **fully inert**: every hook AND every scheduled/detached entry point (gardener/harvest/miner)
   exits early — no writes, no spend, no scheduled run — and `doctor` treats "schedule absent while
   disabled" as coherent, not a warning.
-- `LOOP_REVIEWER=1` is the opt-out contract: every loop-internal or loop-adjacent `claude -p`
-  (reviewer, gardener, miner, probes, backtests) exports it so hooks and telemetry ignore those
-  sessions.
-- **Untrusted-input tool denylist:** the LLM workers (reviewer, gardener, miner) run `claude -p`
-  on UNTRUSTED input — transcript slices, memory bodies — under `--permission-mode
-  bypassPermissions`, which *ignores* `--allowedTools`. Each therefore carries an explicit
-  `--disallowedTools` denying Bash and the exec/exfil/spawn tools it never needs, so a
-  prompt-injection cannot steer a worker into a shell command. A denylist is the only lever the CLI
-  exposes headless (unlike a runtime-dispatch whitelist, which needs owning the loop) — so it must
-  be revisited when Claude Code adds tools; a contract test asserts every `claude -p` in `bin/`
-  carries it.
+- `LOOP_REVIEWER=1` is the opt-out contract: every loop-internal or loop-adjacent worker/model
+  call (reviewer, gardener, miner, probes, backtests) exports it so hooks and telemetry ignore
+  those sessions.
+- **Platform-enforced least privilege (#23):** the LLM workers (reviewer, gardener, miner) consume
+  UNTRUSTED input — transcript slices, memory bodies — so each runs under the driver adapter's
+  least-privilege enforcement, writes path-scoped to its per-worker scope: reviewer/miner may write
+  only `proposals/`, the gardener only the store + its garden log outputs (store repo-metadata
+  denied). The enforcement mechanism belongs to the *driver* (see the driver contract above); the
+  relocation to `LOOP_HOME` is what makes fine-grained scoping expressible at all. A prompt-injection
+  that tries to write outside a worker's scope is denied by the platform, not merely by a denylist.
+  A tool denylist is kept as a second, independent layer, contract-tested at the spawn seam; `doctor`
+  flags a stale/missing profile, and a worker hard-fails rather than spawn without an intact one.
+  Adapter-specific mechanics — rule syntax, profile materialization, and the empirically established
+  traps — live in `docs/decisions/de-bypass-relocation.md`.
+- **The tripwire (#23, replaces the mirror/guard):** platform permissions govern the MODEL's tool
+  calls only — a hook/MCP/subprocess side-effect is plain bash and can write anywhere. So each worker
+  fingerprints the *impossible zones* (pending/, installed skills/, and the `.git` of memory-global +
+  skills) before and after its model window; any change is an ungoverned side-effect → **evidence-only
+  ABORT**, no restore (the store's validity is enforced separately by `validate_store`). The `.git`
+  fingerprint is checked GIT-FREE and, on the gardener's failure path, aborts BEFORE any git op — else
+  a tampered `.git/config` helper (core.fsmonitor/filter.clean) would run on the very restore meant to
+  recover. A memory-global BODY write is NOT a zone hit: that is ordinary external traffic, reconciled
+  by the ingress path (valid → accepted first-class, invalid → parked).
+  - **Invariant — installed guarded artifacts are copies, not symlinks:** the zone fingerprint walks *real*
+    files (`find`, no `-L`), so a symlinked skill dir's target edit would be invisible to the tripwire. Install
+    therefore keeps skills as copies even in `--link` mode (the `--link` machinery symlinks live outside
+    `SKILLS_DIR`), and `doctor` flags any symlink under installed skills. (This is a policy invariant, not a
+    `find`-flag choice: following symlinks would instead pull unbounded external trees into the fingerprint.)
+- **Profiles are integrity-checked, not just fresh (#23):** a materialized worker profile is a load-bearing
+  *mutable* control file, so both `doctor` and the worker spawn compare it **byte-for-byte** against a fresh
+  render of its template — an added/edited allow-rule fails the check even if the realpath prefix still matches,
+  and the worker refuses to spawn (fail-closed). All three workers spawn through one `worker_spawn` seam that
+  owns the profile check + the driver flags, so a different driver swaps one function, not three scripts.
 - Skills never auto-install; instruction-layer edits (graduation) are human-gated; memory
   auto-write is mode-gated (`dry-run` stages everything).
 - `loopctl status | stats | doctor` is the operator surface; scheduled runs self-heal on
@@ -205,20 +315,24 @@ three-phase adversarial review (design → instrument → inference).
   gardener declares its drops, validation fails closed on any undeclared/rule-typed drop (`b4892d7`);
   xhigh hardening pass — traversal-safe index targets, fully-inert kill switch across all hooks,
   declared-actions schema enforcement (`6286d23`).
-- **Safety invariant — untrusted-input denylist (`9bd7b9e`):** every `claude -p` worker
-  (reviewer/gardener/miner) runs `--permission-mode bypassPermissions` on UNTRUSTED input (transcript
-  slices, memory bodies), which ignores `--allowedTools`; each therefore carries `--disallowedTools`
-  including Bash (the only headless gate against a prompt-injection steering a worker into a shell).
-  Contract-tested against new call-sites.
+- **Safety invariant — platform-enforced least privilege + tripwire (#23):** every LLM worker
+  (reviewer/gardener/miner) runs in DEFAULT mode (bypass dropped) against a materialized per-worker
+  permission profile that path-scopes its writes — enforced by the platform (Claude adapter) because the store moved to
+  `LOOP_HOME` out of the protected `~/.claude`. The `--disallowedTools` denylist (incl. Bash) is kept as
+  a second layer. A per-window tripwire fingerprints the impossible zones (pending/, skills/, and the
+  `.git` of memory-global + skills) and aborts on any ungoverned side-effect, `.git` checked git-free
+  before any git op. Contract-tested; profile freshness surfaced by `doctor`. (Supersedes the earlier
+  `bypassPermissions` + denylist-only model, `9bd7b9e`.)
 - **Reviewer — slice-only (`5e8dd91`):** the reviewer judges its transcript slice + the POLICY
   capture bar/exemplars and does NOT browse the memory store. A blind A/B (26 slices) found
   store-browsing *suppressed* capture; dedup correctness rests downstream on the gatekeeper's
   exact-reject + the nightly gardener's near-dup merge.
 - **Pending a human sitting:** the rules graduation batch (memory → instruction layer).
-- **Re-enable readiness (the gate now):** reinstall from the repo FIRST (the live `~/.claude/loop`
-  is a copy install — hardening commits are repo-only until reinstalled); re-flip `gates.tsv` rows
-  1–2 → `live` after install (plain-copy install resets them to shadow); and bring the slice-only
-  reviewer live only with the gardener running nightly + a dup-rate monitor armed (dedup moved
-  downstream when the reviewer stopped browsing).
+- **Re-enable readiness (the gate now):** **migrate first** — `./claude-loop migrate` relocates the
+  live `~/.claude/loop` + `~/.claude/memory-global` to `LOOP_HOME` (`~/.claude-loop`), resumably, keeping
+  git history and repointing settings hooks + `autoMemoryDirectory`; it refuses while the loop is enabled
+  and validates the store before moving. Then re-flip `gates.tsv` rows 1–2 → `live` (plain-copy install
+  resets them to shadow); and bring the slice-only reviewer live only with the gardener running nightly +
+  a dup-rate monitor armed (dedup moved downstream when the reviewer stopped browsing).
 - **Planned (Phase 3):** mid-turn gates (shadow-first, friction first), warm-start, search CLI,
   per-turn injection cap; then the backlog's NEXT track (incl. skill-pointer injection).

@@ -42,16 +42,27 @@ MEASUREMENT_VERSION=1     # bump on any scorer/schema change so mid-window regim
 # homes as args to `loopctl share-memory` or set this key; no implicit default (targets are explicit).
 SHARE_MEMORY_HOMES=""
 
-# ── Paths (honor CLAUDE_CONFIG_DIR so a temp install can be tested in isolation) ─
+# ── Paths (#23: LOOP_HOME ≠ CLAUDE_HOME — DISTINCT concepts) ────────────────────
+# CLAUDE_HOME = the ~/.claude surfaces ONLY (skills discovery, settings, transcript discovery). LOOP_HOME = all
+# loop-owned machinery + store + worker-writable state, relocated OUT of ~/.claude (a protected path where scoped
+# permissions can't grant writes). Every loop-data path below derives from LOOP_HOME, NEVER from CLAUDE_HOME
+# (audited by a repo-wide grep gate). CLAUDE_CONFIG_DIR is honored for CLAUDE_HOME so a temp install isolates —
+# but it is NEVER exported around `claude -p` (exporting it flips the CLI from keychain to file creds → "Not logged in").
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-LOOP_DIR="$CLAUDE_HOME/loop"
-MEMORY_DIR="$CLAUDE_HOME/memory-global"
-SKILLS_DIR="$CLAUDE_HOME/skills"
+# LOOP_HOME is its OWN axis — never derived from CLAUDE_CONFIG_DIR/CLAUDE_HOME (that conflation is what #23 removes).
+# Tests isolate by setting LOOP_HOME directly (+ a preflight guard asserting it's under the temp root, never the real store).
+export LOOP_HOME="${LOOP_HOME:-$HOME/.claude-loop}"   # exported (safe — unlike CLAUDE_CONFIG_DIR) so python subprocesses (build_index/shadow_score) + tests inherit it
+LOOP_DIR="$LOOP_HOME"                       # machinery root: bin/, lib.sh, hooks/, prompts/, config.sh, gates.tsv, policy/
+MEMORY_DIR="$LOOP_HOME/memory-global"       # the store (relocated out of ~/.claude)
+SKILLS_DIR="$CLAUDE_HOME/skills"            # skills DISCOVERY dir — stays under ~/.claude; written ONLY by the operator-gated install step
 PENDING_SKILLS="$LOOP_DIR/pending/skills"
 PENDING_MEM="$LOOP_DIR/pending/memories"
 STATE_DIR="$LOOP_DIR/state"
 MEASURE_DIR="$STATE_DIR/measure"   # passive-measurement jsonl streams (gitignored via loop/state/)
+QUARANTINE_DIR="$STATE_DIR/quarantine"   # parked external dirt (#16). Under state/ → OUTSIDE the tripwire zones (pending/, skills/, .git) so a park can't itself trip the tripwire/validate
 ARCHIVE_DIR="$LOOP_DIR/archive"
+POLICY_DIR="$LOOP_DIR/policy"          # #23: checked-in per-worker permission TEMPLATES (@@LH@@ placeholder); machinery (symlinked in --link)
+PROFILES_DIR="$STATE_DIR/profiles"     # #23: MATERIALIZED profiles (realpath-substituted at install/reprofile); writable, worker-consumed via --settings
 LOG="$LOOP_DIR/log/loop.log"
 ENV_FILE="$LOOP_DIR/.env"
 

@@ -4,7 +4,7 @@
 # so nothing touches the live install. Formalizes the ad-hoc checks run when the machinery was built.
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+. "$(dirname "$0")/_setup.sh"
 export CLAUDE_CONFIG_DIR="$tmp"; mkdir -p "$tmp/loop/state"
 # shellcheck source=/dev/null
 . "$root/loop/lib.sh" 2>/dev/null || { echo "  FAIL  cannot source lib.sh"; exit 1; }

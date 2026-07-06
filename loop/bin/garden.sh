@@ -10,7 +10,7 @@ export LOOP_REVIEWER=1
 
 tag="${1:-scheduled}"   # "--catch-up" when invoked by harvest
 acquire_store_lock "garden-$tag" || { log "garden: memory store busy (garden/miner running) — skip ($tag)"; exit 0; }
-trap 'release_store_lock' EXIT
+trap 'release_store_lock' EXIT   # garden keeps the FULL-run lock (a multi-file store rewrite must be coherent)
 
 stamp="$(date '+%Y-%m-%d')"; run_id="$(date +%s)"   # run-scoped ids — two gardens in ONE day must not overwrite each other's forensics
 digest="$LOOP_DIR/log/garden-$stamp-$run_id.md"
@@ -30,19 +30,22 @@ prompt="${prompt//'{{DECLARED}}'/$declared}"
 prompt="${prompt//'{{MAX_LINES}}'/$MEMORY_INDEX_MAX_LINES}"
 
 log "garden: start mode=$LOOP_MODE model=$GARDENER_MODEL ($tag)"
-mem_snapshot "pre-garden"   # rollback point before the gardener edits memory-global
-pre_rev="$(mem_git rev-parse HEAD 2>/dev/null)"   # for the garden-actions sidecar (diff vs post)
+ing="$(ingest_external)"; [ "$ing" = clean ] || log "garden: entry ingress=$ing ($tag)"   # #16: reconcile pre-existing external dirt UNDER THE LOCK first (replaces the pre-garden snapshot; gardener runs on a clean store)
+# P1-a backstop: if the COMMITTED store is invalid post-ingress, don't spend on the gardener — restore/quarantine can't
+# proceed from a broken baseline and any edit would just fail validate. doctor already surfaces `store INVALID`.
+if ! validate_store "$MEMORY_DIR" >/dev/null 2>&1; then
+  log "garden: store INVALID (committed) — skip, no spend ($tag) (loopctl verify-store)"; exit 0
+fi
+pre_rev="$(mem_git rev-parse HEAD 2>/dev/null)"   # rollback ref (post-ingress HEAD) + garden-actions sidecar diff base
 rm -f "$digest" "$declared"   # F3 + P2: fresh per-run artifacts; a stale declared file must never justify today's drops
-raw="$(printf '%s' "$prompt" | claude -p \
-  --model "$GARDENER_MODEL" \
-  --effort "$GARDENER_EFFORT" \
-  --permission-mode bypassPermissions \
-  --add-dir "$CLAUDE_HOME" \
-  --no-session-persistence \
-  --output-format json \
-  --allowedTools Read Write Edit Grep Glob \
-  --disallowedTools Bash Task WebFetch WebSearch NotebookEdit 2>/dev/null)"   # bypassPermissions IGNORES --allowedTools; memory bodies are UNTRUSTED input → denylist is the only gate (keeps Edit — the gardener needs it)
-rc=$?   # pipefail is set, so this is claude's exit status
+zbase="$(zone_fingerprint)"   # #23 tripwire baseline — impossible zones (pending/ + installed skills/); the gardener legitimately writes memory-global + log/, so those are NOT zones
+gbase="$(zone_git_fingerprint)"   # #23 .git-only baseline (memory-global/.git + skills/.git) — the RCE surface, checked git-FREE below BEFORE any git op
+# #23 seam: worker_spawn centralizes the driver (profile integrity + default-mode + scoped flags). gardener writes
+# memory-global/** + log/garden-* (profile-scoped, .git denied); --add-dir SKILLS_DIR to READ installed skills for
+# the report (never writes them; --tools keeps Edit for availability). memory bodies are UNTRUSTED input.
+raw="$(printf '%s' "$prompt" | worker_spawn gardener "$GARDENER_MODEL" "$GARDENER_EFFORT" "Read,Write,Edit,Grep,Glob" "Bash Task WebFetch WebSearch NotebookEdit" "$SKILLS_DIR" 2>/dev/null)"
+rc=$?   # pipefail: worker_spawn's rc (claude's exit status, or EX_PROFILE if the profile is missing/tampered)
+[ "$rc" = "$EX_PROFILE" ] && { log "garden: gardener profile unavailable/tampered (${PROFILES_DIR#$HOME/}) — abort, no spend ($tag) (loopctl reprofile)"; exit 1; }
 
 # Confirmed success requires ALL of: clean exit, parseable JSON, no API error reported, and a
 # fresh non-empty digest written THIS run. A timeout / dropped connection (the observed failure)
@@ -60,6 +63,23 @@ else
 fi
 [ -s "$digest" ]                || { ok=0; reason="${reason:+$reason,}no-digest"; }
 [ "${dmtime:-0}" -ge "$start" ] || { ok=0; reason="${reason:+$reason,}stale-digest"; }
+# #23 .git tripwire (r5 ordering, git-FREE, runs BEFORE any git op below): a hook/MCP side-effect that rewrites
+# memory-global/.git or skills/.git (e.g. core.fsmonitor|filter.clean helper) would detonate on the very git op
+# meant to recover — this failure path runs mem_restore_to (git reset/clean) which would EXECUTE the tampered
+# config. So detect it here, before actuate/validate/restore, and ABORT HARD with NO git op at all: leave the
+# tree + tampered .git as forensic evidence for a human (loopctl doctor / verify-store). No mirror to restore from.
+if [ "$gbase" != "$(zone_git_fingerprint)" ]; then
+  printf '%s|%s' "$(date +%s)" "git-zone-tamper" > "$STATE_DIR/garden.fail" 2>/dev/null || true
+  log "garden: ABORT — memory-global/.git or skills/.git changed during the gardener window (config-tamper class); NO git op run, tree left as forensic evidence ($tag)"
+  exit 1
+fi
+# #23 tripwire: the gardener's writes are platform-scoped to memory-global/** + log/garden-* (deny .git). A change
+# to the IMPOSSIBLE zones (pending/ + installed skills/, which the gardener never writes) during its run = an
+# ungoverned side-effect (hook/MCP) → FAIL the run fail-closed (memory-global then reverts to pre_rev via the failure
+# path). Evidence-only, NO restore machinery. Runs regardless of gardener rc. .git already handled above.
+if [ "$zbase" != "$(zone_fingerprint)" ]; then
+  ok=0; reason="${reason:+$reason,}impossible-zone-write"
+fi
 
 # DECLARED-ACTIONS ACTUATION (P1) — ACTIVE MODE ONLY. The LLM gardener has no delete tool, so it only DECLARES
 # prune/merge intent; this deterministic bash actuates it (validate declaration schema/merge-graph/rule-typed/
@@ -88,7 +108,18 @@ if [ "$ok" = 1 ]; then
   rebuild_mem_index "garden"   # derived retriever index; stale index self-heals next write
   log "garden: done (ok) cost=${cost:-?} -> $digest"
 else
-  mem_restore_to "$pre_rev" "$patch"   # discard corrupt tree → HEAD stays clean at pre-garden
+  # GARDEN-RESTORE leg (#16): the restore below reverts the whole tree to pre_rev, which would SWEEP any peer
+  # write that landed in the garden window. The gardener only edits/prunes EXISTING (tracked) bodies, so an
+  # untracked file here is a non-gardener (peer) write → preserve it as a recoverable, doctor-visible quarantine
+  # item before reverting, instead of burying it in the forensic patch nobody reads.
+  ext="$(mem_git ls-files --others --exclude-standard 2>/dev/null)"
+  if [ -n "$ext" ]; then
+    qd="$QUARANTINE_DIR/garden-swept-$run_id"; mkdir -p "$qd"
+    printf 'peer writes reverted on garden FAIL (%s) — recover by hand if wanted\n' "$reason" > "$qd/reason"
+    printf '%s\n' "$ext" | while IFS= read -r u; do [ -n "$u" ] && cp -p "$MEMORY_DIR/$u" "$qd/" 2>/dev/null; done
+    log "garden: external memory ingress invalid — $(printf '%s\n' "$ext" | grep -c .) peer write(s) parked in ${qd#$HOME/}"
+  fi
+  mem_restore_to "$pre_rev" "$patch"   # discard corrupt tree → HEAD stays clean at the post-ingress rev
   [ -f "$declared" ] && { printf '\n=== declared-actions.json (this failed run) ===\n'; cat "$declared"; } >> "$patch" 2>/dev/null   # P2: fold the run's declared intent into the forensic bundle
   printf '%s|%s' "$(date +%s)" "$reason" > "$STATE_DIR/garden.fail"
   log "garden: FAILED ($reason) cost=${cost:-?} — restored to pre-garden; harvest will retry when awake"

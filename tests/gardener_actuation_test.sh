@@ -7,14 +7,14 @@
 # REAL actuate_declared + validate_store code path. Public-safe: temp CLAUDE_CONFIG_DIR + controlled store.
 set -uo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+. "$(dirname "$0")/_setup.sh"
 rc=0
 ok(){ if [ "$1" = "$2" ]; then echo "  ok    $3"; else echo "  FAIL  $3 (got '$1' want '$2')"; rc=1; fi; }
 has(){ case "$1" in *"$2"*) echo yes;; *) echo no;; esac; }
 
 CLAUDE_CONFIG_DIR="$tmp" bash "$repo/claude-loop" install >/dev/null 2>&1 || { echo "  FAIL  claude-loop install errored"; exit 1; }
 export CLAUDE_CONFIG_DIR="$tmp"
-L="$tmp/loop"; memdir="$tmp/memory-global"
+L="$tmp/loop"; memdir="$LOOP_HOME/memory-global"
 printf 'LOOP_ENABLED=1\nLOOP_MODE=active\n' > "$L/config.local.sh"
 
 eval "$(bash -c ". \"$L/lib.sh\"; printf 'P_MEM=%q\nP_LOG=%q\n' \"\$MEMORY_DIR\" \"\$LOG\"")"
@@ -127,7 +127,7 @@ sig(){ find "$memdir" -type f -not -path '*/.git/*' 2>/dev/null | LC_ALL=C sort 
 sbin="$tmp/stubbin"; mkdir -p "$sbin"
 cat > "$sbin/claude" <<'STUB'
 #!/usr/bin/env bash
-prompt="$(cat)"; store="$CLAUDE_CONFIG_DIR/memory-global"
+prompt="$(cat)"; store="$LOOP_HOME/memory-global"
 digest="$(printf '%s' "$prompt" | tr '`' '\n' | grep -oE '^/[^ ]*garden-[0-9][0-9-]*\.md$' | head -1)"
 declared="$(printf '%s' "$prompt" | tr '`' '\n' | grep -oE '^/[^ ]*garden-declared-[0-9][0-9-]*\.json$' | head -1)"
 case "${GARDEN_TEST_SCENARIO:-}" in

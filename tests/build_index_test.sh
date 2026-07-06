@@ -4,7 +4,7 @@
 # stale index). Guards the unique-temp + atomic-replace. Public-safe (synthetic corpus).
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+. "$(dirname "$0")/_setup.sh"
 mkdir -p "$tmp/mem"
 printf '# Memory Index\n- [a](a.md) — alpha token\n- [b](b.md) — beta token\n' > "$tmp/mem/MEMORY.md"
 printf 'body alpha content\n' > "$tmp/mem/a.md"; printf 'body beta content\n' > "$tmp/mem/b.md"

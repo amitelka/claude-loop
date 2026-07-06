@@ -17,7 +17,7 @@ own_fail=0; { [ "$sched" = 1 ] || [ "$catchup" = 1 ]; } && [ "$dry" = 0 ] && own
 { [ "$sched" = 1 ] || [ "$catchup" = 1 ]; } && [ "${SKILL_MINER_ENABLED:-0}" != 1 ] && { log "mine-skills: unattended run but SKILL_MINER_ENABLED=0 — skip"; exit 0; }
 
 acquire_store_lock "mine-skills" || { log "mine-skills: memory store busy (garden or miner running) — skip"; echo "mine-skills: store busy — skip (retry later / after garden finishes)"; exit 0; }
-trap 'release_store_lock' EXIT
+trap 'release_store_lock' EXIT   # miner holds the lock across its corpus read (a garden mutating the store mid-read = incoherent candidates)
 
 STATE_FILE="$STATE_DIR/skill-miner.state.json"
 fp="$(miner_fingerprint)"
@@ -50,25 +50,24 @@ prompt="${prompt//'{{PENDING_SKILLS}}'/$PENDING_SKILLS}"
 prompt="${prompt//'{{SKILL_USES}}'/$STATE_DIR/skill-uses.jsonl}"
 prompt="${prompt//'{{PROPOSAL_FILE}}'/$proposal}"
 
-guard_before="$(loop_manifest)"   # miner may write ONLY its proposal file (in proposals/, not fingerprinted)
+zbase="$(zone_fingerprint)"   # #23 tripwire baseline — impossible zones (pending/ + installed skills/ + their .git); the miner claude writes only its proposal, the bash stages pending/skills AFTER this check
 log "mine-skills: start model=$SKILL_MINER_MODEL dry=$dry"
-raw="$(printf '%s' "$prompt" | claude -p \
-  --model "$SKILL_MINER_MODEL" --effort "$SKILL_MINER_EFFORT" \
-  --permission-mode bypassPermissions --add-dir "$CLAUDE_HOME" \
-  --no-session-persistence --output-format json \
-  --allowedTools Read Grep Glob Write \
-  --disallowedTools Bash Edit Task WebFetch WebSearch NotebookEdit 2>/dev/null)"   # bypassPermissions IGNORES --allowedTools; the mined corpus is UNTRUSTED input → denylist is the only gate
-rc=$?
+# #23 seam: worker_spawn centralizes the driver (profile integrity + default-mode + scoped flags). Write path-scoped
+# to proposals/ by the profile (bash stages pending/skills AFTER); --add-dir SKILLS_DIR = installed-skills corpus. UNTRUSTED.
+raw="$(printf '%s' "$prompt" | worker_spawn miner "$SKILL_MINER_MODEL" "$SKILL_MINER_EFFORT" "Read,Grep,Glob,Write" "Bash Edit Task WebFetch WebSearch NotebookEdit" "$SKILLS_DIR" 2>/dev/null)"; rc=$?
+[ "$rc" = "$EX_PROFILE" ] && { log "mine-skills: miner profile unavailable/tampered (${PROFILES_DIR#$HOME/}) — skip (loopctl reprofile)"; echo "mine-skills: miner profile unavailable (loopctl reprofile)"; exit 1; }
+# #23 TRIPWIRE FIRST (P0-2/r3 ordering): compare the impossible zones IMMEDIATELY after the model call, BEFORE the
+# rc/api-error/no-proposal branch — a plant during a failed or no-proposal window must NOT escape unflagged.
+if [ "$zbase" != "$(zone_fingerprint)" ]; then
+  log "mine-skills: ANOMALY — impossible-zone (pending/skills/.git) changed during the mine window; aborting (nothing staged)"
+  echo "mine-skills: anomaly — impossible zone changed under the mine; aborted"; exit 1
+fi
 is_err="$(printf '%s' "$raw" | jq -r 'if type=="array" then (map(select(.type=="result"))|last|.is_error) else (.is_error // false) end' 2>/dev/null)"
 cost="$(printf '%s' "$raw" | jq -r 'if type=="array" then (map(select(.type=="result"))|last|.total_cost_usd) else empty end' 2>/dev/null)"
 if [ "$rc" -ne 0 ] || [ "$is_err" = "true" ] || ! { [ -f "$proposal" ] && jq -e . "$proposal" >/dev/null 2>&1; }; then
   log "mine-skills: FAILED (rc=$rc err=$is_err) — no valid proposal"; echo "mine-skills: failed (see $LOG)"
   [ "$own_fail" = 1 ] && printf '%s|rc=%s,err=%s\n' "$(date +%s)" "$rc" "$is_err" > "$STATE_DIR/skill-miner.fail"   # arm the self-heal retry
   exit 1
-fi
-if [ "$guard_before" != "$(loop_manifest)" ]; then
-  log "mine-skills: ANOMALY — miner touched memory-global/pending/skills directly; aborting (nothing staged)"
-  echo "mine-skills: anomaly — miner touched real state; aborted"; exit 1
 fi
 
 n=$(jq '.candidates|length' "$proposal" 2>/dev/null || echo 0)

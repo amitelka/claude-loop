@@ -5,17 +5,17 @@
 set -uo pipefail
 unset LOOP_REVIEWER
 root="$(cd "$(dirname "$0")/.." && pwd)"
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-export CLAUDE_CONFIG_DIR="$tmp"; mkdir -p "$tmp/loop/state" "$tmp/loop/bin" "$tmp/memory-global"
+. "$(dirname "$0")/_setup.sh"
+export CLAUDE_CONFIG_DIR="$tmp"; mkdir -p "$tmp/loop/state" "$tmp/loop/bin" "$LOOP_HOME/memory-global"
 cp "$root/loop/lib.sh" "$root/loop/config.sh" "$root/loop/tags.sh" "$root/loop/gates.tsv" "$tmp/loop/"
 cp "$root/loop/bin/shadow_score.py" "$root/loop/bin/gate-runner.sh" "$root/loop/bin/build_index.py" "$tmp/loop/bin/"
-cat > "$tmp/memory-global/MEMORY.md" <<'EOF'
+cat > "$LOOP_HOME/memory-global/MEMORY.md" <<'EOF'
 # Memory Index
 - [macOS dev gotchas](macos-dev-env-gotchas.md) — Apple-Silicon: PDF PATH, BSD sed, Docker Desktop, pyenv dyld hang
 - [LVM lv_attr open flag](lvm-lv-attr-open-flag.md) — lv_attr idx 5 = device-open; avoids lvremove stall
 EOF
-printf '# Memory Archive (cold tier)\n' > "$tmp/memory-global/ARCHIVE.md"
-python3 "$tmp/loop/bin/build_index.py" "$tmp/memory-global" "$tmp/loop/state/mem-index.json" >/dev/null
+printf '# Memory Archive (cold tier)\n' > "$LOOP_HOME/memory-global/ARCHIVE.md"
+python3 "$tmp/loop/bin/build_index.py" "$LOOP_HOME/memory-global" "$tmp/loop/state/mem-index.json" >/dev/null
 shadow="$tmp/loop/state/measure/shadow.jsonl"
 rc=0
 ok() { if [ "$1" = "$2" ]; then echo "  ok    $3"; else echo "  FAIL  $3 (got '$1' want '$2')"; rc=1; fi; }

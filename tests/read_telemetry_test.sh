@@ -4,9 +4,9 @@
 # config.local.sh (config.sh sets LOOP_ENABLED/MEASUREMENT_ENABLED unconditionally, so env won't stick).
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-export CLAUDE_CONFIG_DIR="$tmp"; mkdir -p "$tmp/loop/state" "$tmp/memory-global"
-hook="$root/loop/hooks/on-read.sh"; md="$tmp/memory-global"; reads="$tmp/loop/state/measure/reads.jsonl"
+. "$(dirname "$0")/_setup.sh"
+export CLAUDE_CONFIG_DIR="$tmp"; mkdir -p "$tmp/loop/state" "$LOOP_HOME/memory-global"
+hook="$root/loop/hooks/on-read.sh"; md="$LOOP_HOME/memory-global"; reads="$tmp/loop/state/measure/reads.jsonl"
 rc=0
 ok() { if [ "$1" = "$2" ]; then echo "  ok    $3"; else echo "  FAIL  $3 (got '$1' want '$2')"; rc=1; fi; }
 run() { printf 'LOOP_ENABLED=1\nMEASUREMENT_ENABLED=%s\n' "${2:-1}" > "$tmp/loop/config.local.sh"; printf '%s' "$1" | bash "$hook"; }

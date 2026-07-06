@@ -14,8 +14,8 @@ STOP = {"the","and","for","that","this","with","from","have","what","how","why",
         "would","could","are","was","not","but","its","use","using","get","let","see","need"}
 def toks(s):
     return {t for t in re.split(r"[^a-z0-9]+", s.lower()) if len(t) >= 3 and t not in STOP}
-IDXPATH = os.environ.get("MEM_INDEX_JSON") or os.path.join(
-    os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude")), "loop/state/mem-index.json")
+IDXPATH = os.environ.get("MEM_INDEX_JSON") or os.path.join(   # #23: fall back to LOOP_HOME (loop state moved out of ~/.claude)
+    os.environ.get("LOOP_HOME", os.path.expanduser("~/.claude-loop")), "state/mem-index.json")
 try:
     idx = json.load(open(IDXPATH)).get("entries", {})
 except Exception:

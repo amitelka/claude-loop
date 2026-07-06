@@ -5,7 +5,7 @@
 # even if it fingerprints as one; unknown homes are skipped. Temp homes (HOME overridden for ~); nothing live.
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+. "$(dirname "$0")/_setup.sh"
 export CLAUDE_CONFIG_DIR="$tmp"; mkdir -p "$tmp/loop"
 loopctl="$root/loop/bin/loopctl"
 rc=0; ok() { if [ "$1" = "$2" ]; then echo "  ok    $3"; else echo "  FAIL  $3 (got '$1' want '$2')"; rc=1; fi; }
@@ -18,7 +18,7 @@ printf 'LOOP_ENABLED=1\nSHARE_MEMORY_HOMES="%s:%s:%s:%s"\n' "$cx" "$cl" "$uk" "$
 out="$(bash "$loopctl" share-memory 2>&1)"
 ok "$(grep -c 'memory-global BEGIN' "$cx/AGENTS.md")" 1 "codex home (config.toml+auth.json) → pointer written"
 grep -q 'pre-existing' "$cx/AGENTS.md"; ok "$?" 0 "codex home: pre-existing AGENTS.md preserved"
-grep -qF "$tmp/memory-global/MEMORY.md" "$cx/AGENTS.md"; ok "$?" 0 "codex home: absolute MEMORY.md path"
+grep -qF "$LOOP_HOME/memory-global/MEMORY.md" "$cx/AGENTS.md"; ok "$?" 0 "codex home: absolute MEMORY.md path"
 ok "$([ -f "$cl/AGENTS.md" ] && echo yes || echo no)" no "claude home (settings.json) → skipped (no AGENTS.md)"
 printf '%s' "$out" | grep -qi 'native auto-load'; ok "$?" 0 "claude home → 'native auto-load' skip reason"
 ok "$([ -f "$uk/AGENTS.md" ] && echo yes || echo no)" no "unknown home → skipped"

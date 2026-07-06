@@ -149,6 +149,7 @@ PLIST
     mem_git checkout "$ref" -- . && { log "rollback: memory-global -> $ref"; rebuild_mem_index "rollback"; echo "memory-global restored to $ref (prior state saved as a snapshot first)"; };;
   reindex) rebuild_mem_index "manual reindex"; echo "derived retriever index rebuilt (mem-index.json)";;
   verify-store) r="$(validate_store "$MEMORY_DIR")" && echo "store OK (index format + orphan/dangling, both tiers)" || { echo "store INVALID: $r"; exit 1; };;
+  reprofile) materialize_profiles && echo "worker permission profiles re-materialized → ${PROFILES_DIR#$HOME/} (LOOP_HOME=$(loop_abs))" || { echo "reprofile FAILED (LOOP_HOME=$LOOP_HOME unresolved?)"; exit 1; };;   # #23: re-bake //-realpath profiles (run after moving LOOP_HOME)
   doctor)
     okx(){ echo "  ✓ $1"; }; wrn(){ echo "  ⚠ $1"; }
     echo "── loop doctor ──"
@@ -167,6 +168,13 @@ PLIST
     elif [ -n "$(find "$MEMORY_DIR" -name '*.md' -newer "$idx" 2>/dev/null | head -1)" ]; then wrn "mem-index.json stale — a memory changed since last build (loopctl reindex)"
     else okx "mem-index.json fresh"; fi
     vr="$(validate_store "$MEMORY_DIR")" && okx "store integrity ok" || wrn "store INVALID: $vr (loopctl verify-store)"
+    qn=$(find "$QUARANTINE_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')   # #16: parked external-ingress dirt awaiting hand-review
+    [ "${qn:-0}" -gt 0 ] && wrn "$qn quarantined external-ingress item(s) in ${QUARANTINE_DIR#$HOME/} (hand-review)" || okx "no quarantined ingress items"
+    pf="$(profiles_fresh)" && okx "worker permission profiles fresh (${PROFILES_DIR#$HOME/})" || wrn "worker profiles STALE/TAMPERED: $pf — 'loopctl reprofile' (workers refuse a non-byte-exact profile, fail-closed)"   # #23 P0-1: byte-exact integrity, not just freshness
+    # #23 P1 invariant: installed guarded artifacts must be COPIES, not symlinks — the tripwire's zone_fingerprint
+    # walks real files (find, no -L), so a symlinked skill dir's target edit would be invisible to it. Flag any.
+    symsk="$(find "$SKILLS_DIR" -type l 2>/dev/null)"   # RECURSIVE — any symlink at any depth under installed skills (matches the ARCHITECTURE invariant; a nested content symlink is tripwire-invisible too)
+    [ -n "$symsk" ] && wrn "symlink(s) under installed skills — tripwire-invisible, must be copies: $(printf '%s ' $symsk | sed "s#$HOME/##g")" || okx "installed skills are real files (tripwire-visible)"
     now="$(date +%s)"; sl=""
     for lk in "$STATE_DIR"/*.lock; do
       [ -d "$lk" ] || continue
@@ -214,7 +222,7 @@ PTR
     for h in "${_hs[@]}"; do
       [ -n "$h" ] || continue
       h="${h/#\~/$HOME}"   # expand a leading ~ (tildes don't expand inside quoted config values)
-      [ "$h" = "$CLAUDE_HOME" ] && { echo "  skip    $h (the loop's own home — memory-global lives here, nothing to share into)"; continue; }
+      { [ "$h" = "$LOOP_HOME" ] || [ "$h" = "$CLAUDE_HOME" ]; } && { echo "  skip    $h (the loop's own home — nothing to share into itself; store lives at $LOOP_HOME/memory-global)"; continue; }
       if [ -f "$h/config.toml" ] && [ -f "$h/auth.json" ]; then   # codex adapter → managed AGENTS.md pointer block
         a="$h/AGENTS.md"; t="$(mktemp)"
         [ -f "$a" ] && awk 'BEGIN{s=0} /claude-loop:memory-global BEGIN/{s=1} s==0{print} /claude-loop:memory-global END/{s=0}' "$a" > "$t"
@@ -227,5 +235,5 @@ PTR
       fi
     done
     ;;
-  *) echo "usage: loopctl {status|stats|skill-stats|mine-skills [--dry-run]|skill-curate|skill-snapshot|skill-rollback <ref>|doctor|enable|disable|mode dry-run|active|review-now|snapshot|rollback <ref>|mem-log|mem-diff|reindex|verify-store|share-memory|install-schedule|uninstall-schedule|token}";;
+  *) echo "usage: loopctl {status|stats|skill-stats|mine-skills [--dry-run]|skill-curate|skill-snapshot|skill-rollback <ref>|doctor|enable|disable|mode dry-run|active|review-now|snapshot|rollback <ref>|mem-log|mem-diff|reindex|verify-store|reprofile|share-memory|install-schedule|uninstall-schedule|token}";;
 esac

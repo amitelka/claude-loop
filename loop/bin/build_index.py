@@ -5,8 +5,9 @@
 # loads in O(ms). Rebuilt idempotently on write by materialize.sh / garden.sh — the hook NEVER reads N bodies
 # per prompt. Gitignored (derived, rebuildable). Deterministic; no model.
 import os, re, sys, json, hashlib, tempfile
-MEMDIR = os.environ.get("MEMORY_DIR") or os.path.join(os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude")), "memory-global")
-OUT = os.environ.get("MEM_INDEX_JSON") or os.path.join(os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude")), "loop/state/mem-index.json")
+_LH = os.environ.get("LOOP_HOME", os.path.expanduser("~/.claude-loop"))   # #23: loop store/state moved out of ~/.claude
+MEMDIR = os.environ.get("MEMORY_DIR") or os.path.join(_LH, "memory-global")
+OUT = os.environ.get("MEM_INDEX_JSON") or os.path.join(_LH, "state/mem-index.json")
 if len(sys.argv) > 1: MEMDIR = sys.argv[1]
 if len(sys.argv) > 2: OUT = sys.argv[2]
 STOP = {"the","and","for","that","this","with","from","have","what","how","why","can","you","should",

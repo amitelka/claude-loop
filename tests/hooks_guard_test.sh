@@ -5,7 +5,7 @@
 # the proof the presence path fires at all, since it has zero organic history (0 spawns ever pre-fix).
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+. "$(dirname "$0")/_setup.sh"
 export CLAUDE_CONFIG_DIR="$tmp"; mkdir -p "$tmp/loop/state" "$tmp/loop/log" "$tmp/loop/bin"
 printf 'LOOP_ENABLED=1\n' > "$tmp/loop/config.local.sh"
 printf '#!/usr/bin/env bash\n:\n' > "$tmp/loop/bin/selfheal.sh"   # stub worker: records nothing, runs no real garden

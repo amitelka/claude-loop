@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Write(//@@LH@@/memory-global/**)",
+      "Edit(//@@LH@@/memory-global/**)",
+      "Write(//@@LH@@/log/garden-*)",
+      "Edit(//@@LH@@/log/garden-*)"
+    ],
+    "deny": [
+      "Write(//@@LH@@/memory-global/.git/**)",
+      "Edit(//@@LH@@/memory-global/.git/**)"
+    ]
+  }
+}

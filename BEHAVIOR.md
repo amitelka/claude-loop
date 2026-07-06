@@ -15,7 +15,7 @@ default nothing here fires.
 ---
 
 ## At session start
-Your hot memory index (`~/.claude/memory-global/MEMORY.md`) auto-loads into context, as it always has. What's
+Your hot memory index (`~/.claude-loop/memory-global/MEMORY.md`, which native auto-memory reads via `settings.autoMemoryDirectory`) auto-loads into context, as it always has. What's
 changed is *what's in it*: only the **session-invariant** — your working-style rules, who you are and your
 environment, and cross-cutting facts that could apply on any turn. Everything scoped to one tool, repo, task,
 or incident moved to a cold archive (`ARCHIVE.md`) that does **not** auto-load. The hot index stays small on
@@ -51,7 +51,8 @@ Injection is the push; the corpus is always **pullable** too. Plain `grep` over 
 (via the share-memory pointer) can read or query the same corpus — one index, many readers.
 
 ## The write side — how memories get made and kept
-You never hand-file a memory. A background **reviewer** runs when a session closes, again as a nightly
+You usually don't hand-file a memory (though you can — see "When something else writes the store"
+below; hand-written files are ingested the same way). A background **reviewer** runs when a session closes, again as a nightly
 backstop, and a mid-session top-up every ~30 tool calls (`REVIEW_EVERY_TOOLCALLS`, default 30; opt out with
 0) — reading the session slice and proposing durable, non-obvious, reusable learnings. All of it is gated by
 `LOOP_ENABLED`, so a fresh install never spends; `loopctl enable` echoes the cadence for informed consent, and
@@ -69,7 +70,19 @@ new skills or patches to existing ones — **always staged** to a pending queue 
 `/review-skills`, never auto-installed or auto-edited. A SessionStart notice tells you when proposals (skills or
 memories) are waiting.
 
+## When something else writes the store
+Other agents on your machine (or you, by hand) can drop memory files straight into the store — no protocol
+needed. At its next entry the loop reconciles them: a **valid** memory is committed as its own
+`external-memory-ingress` commit (visible in `loopctl mem-log`) with its index pointer placed by the declared
+`type`; a **broken** file (bad name, unparseable frontmatter, missing type) is copied to quarantine for you to
+fix up — `doctor` shows the count — and the store is made whole again from git. **Deleting a memory by hand
+doesn't stick**: it comes back at the next entry, because only the nightly gardener (via its declared,
+validated actions) or human graduation may remove memories. Net effect: nothing anyone writes is silently
+lost — worst case it's parked, visibly, for manual fix-up; and the store git HEAD is always valid.
+
 ## What runs when
+- **At every loop entry (review, write, garden):** external writes to the store since last time are validated
+  and committed first (or parked if broken) — the loop always starts from a clean, valid store.
 - **Per finished session / on Stop:** the reviewer considers whether anything is worth capturing (usually not).
 - **Nightly (backstop):** a harvest pass reviews any session activity the Stop-hook path missed or that ended below its threshold — the safety net that turns a missed capture into a delay, not a loss.
 - **Nightly:** the gardener curates the whole store and rebuilds the retriever's index.
@@ -92,8 +105,12 @@ ones above — because the loop edits its own inputs; a reversible data write do
 | `LOOP_ENABLED` | master switch; `0` = the whole loop is inert |
 | `MEASUREMENT_ENABLED` | shadow logging on/off (independent kill switch) |
 | `loop/gates.tsv` `mode` | per-gate `shadow` (log only) / `live` (inject) / `off` |
+| `LOOP_HOME` | where the loop lives (`~/.claude-loop`); changing it requires `loopctl reprofile` |
 
-- `loopctl doctor` — hooks wired, schedule loaded, memory-global clean, index fresh vs stale.
+- `loopctl doctor` — hooks wired, schedule loaded, memory-global clean, index fresh vs stale; plus the #23
+  rows: quarantined ingress items awaiting hand-review, worker permission profiles byte-exact vs their
+  templates (a stale profile makes workers refuse to spawn), and installed skills being real dirs (a
+  symlinked skill is flagged — it would be invisible to the tripwire).
 - `loopctl stats` — reviewer/gardener/miner activity, regret count.
 - **Cry-wolf read-rate** (post-flip) — how often an injected pointer actually gets Read. Sustained decay means
   the channel is losing credibility and a precision lever should fire.

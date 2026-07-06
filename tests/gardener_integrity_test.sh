@@ -5,14 +5,14 @@
 # an invalid write. Public-safe: temp CLAUDE_CONFIG_DIR + a controlled store + a stub `claude` (the gardener).
 set -uo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+. "$(dirname "$0")/_setup.sh"
 rc=0
 ok(){ if [ "$1" = "$2" ]; then echo "  ok    $3"; else echo "  FAIL  $3 (got '$1' want '$2')"; rc=1; fi; }
 has(){ case "$1" in *"$2"*) echo yes;; *) echo no;; esac; }
 
 CLAUDE_CONFIG_DIR="$tmp" bash "$repo/claude-loop" install >/dev/null 2>&1 || { echo "  FAIL  claude-loop install errored"; exit 1; }
 export CLAUDE_CONFIG_DIR="$tmp"
-L="$tmp/loop"; memdir="$tmp/memory-global"
+L="$tmp/loop"; memdir="$LOOP_HOME/memory-global"
 printf 'LOOP_ENABLED=1\nLOOP_MODE=active\n' > "$L/config.local.sh"   # garden.sh/materialize need the loop enabled + active
 
 # ── PREFLIGHT (kill-switch pattern): resolved store paths MUST be under the temp root, else ABORT ──
@@ -99,7 +99,7 @@ sbin="$tmp/stubbin"; mkdir -p "$sbin"
 cat > "$sbin/claude" <<'STUB'
 #!/usr/bin/env bash
 prompt="$(cat)"   # the interpolated garden prompt carries the RUN-SCOPED digest + declared paths (like the real gardener)
-store="$CLAUDE_CONFIG_DIR/memory-global"
+store="$LOOP_HOME/memory-global"
 digest="$(printf '%s' "$prompt" | tr '`' '\n' | grep -oE '^/[^ ]*garden-[0-9][0-9-]*\.md$' | head -1)"
 declared="$(printf '%s' "$prompt" | tr '`' '\n' | grep -oE '^/[^ ]*garden-declared-[0-9][0-9-]*\.json$' | head -1)"
 mangle(){ sed -i.bak '3s/$/ - [h2b](h2b.md) — merged/' "$store/MEMORY.md"; rm -f "$store/MEMORY.md.bak"; }   # append a 2nd entry-head to line 3
@@ -162,14 +162,14 @@ build_store; echo "- [ghostx](ghostx.md) — no file" >> "$memdir/MEMORY.md"   #
 git -C "$memdir" -c user.email=t@t -c user.name=t commit -aqm corrupt
 LOOP_MODE=active PATH="$sbin:$PATH" bash "$L/bin/materialize.sh" "$valid_prop" sess2 "$tmp" >/dev/null 2>&1
 ok "$([ -f "$memdir/newmemo.md" ] && echo committed || echo reverted)" reverted "(d) invalid post-write state → write REVERTED (no commit)"
-ok "$(ls "$L/pending/memories"/quarantine-sess2-*.json >/dev/null 2>&1 && echo yes || echo no)" yes "(d) proposal QUARANTINED to pending/"
+ok "$(ls "$QUARANTINE_DIR"/materialize-sess2-*.json >/dev/null 2>&1 && echo yes || echo no)" yes "(d) proposal QUARANTINED to QUARANTINE_DIR (#16 P1-i: out of the guarded dirs)"
 ok "$(grep -c 'materialize: quarantine' "$P_LOG" 2>/dev/null | tr -d ' ' | grep -qv '^0$' && echo yes || echo no)" yes "(d) doctor-visible quarantine tag logged"
 
 # ═══ PART 4 — INCIDENT regression fixture (mangled line + dropped slug together) ═══
 echo "── Part 4: incident replay ──"
 cat > "$sbin/claude" <<'STUB'
 #!/usr/bin/env bash
-prompt="$(cat)"; store="$CLAUDE_CONFIG_DIR/memory-global"
+prompt="$(cat)"; store="$LOOP_HOME/memory-global"
 digest="$(printf '%s' "$prompt" | tr '`' '\n' | grep -oE '^/[^ ]*garden-[0-9][0-9-]*\.md$' | head -1)"
 sed -i.bak '3s/$/ - [h2b](h2b.md) — merged/' "$store/MEMORY.md"; rm -f "$store/MEMORY.md.bak"   # mangle line 3
 rm -f "$store/c1.md"; grep -v '(c1.md)' "$store/ARCHIVE.md" > "$store/.a" && mv "$store/.a" "$store/ARCHIVE.md"   # + drop c1

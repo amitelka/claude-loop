@@ -3,10 +3,10 @@
 # hits@1/hits@3. Minimal regression guard against a temp index; nothing live.
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-export CLAUDE_CONFIG_DIR="$tmp"; mkdir -p "$tmp/loop/bin" "$tmp/memory-global"
+. "$(dirname "$0")/_setup.sh"
+export CLAUDE_CONFIG_DIR="$tmp"; mkdir -p "$tmp/loop/bin" "$LOOP_HOME/memory-global"
 cp "$root/loop/bin/shadow_score.py" "$root/loop/bin/build_index.py" "$tmp/loop/bin/"   # recall-probe resolves both via $LOOP_DIR/bin (scorer reads the derived index)
-cat > "$tmp/memory-global/MEMORY.md" <<'EOF'
+cat > "$LOOP_HOME/memory-global/MEMORY.md" <<'EOF'
 # Memory Index
 - [macOS dev gotchas](macos-dev-env-gotchas.md) — Apple-Silicon: pyenv dyld hang, BSD sed, Docker Desktop
 - [LVM lv_attr open flag](lvm-lv-attr-open-flag.md) — lv_attr idx 5 = device-open; avoids lvremove stall

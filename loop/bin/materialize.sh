@@ -8,12 +8,28 @@ set -uo pipefail
 P="${1:?proposal json}"; session="${2:-manual}"; cwd="${3:-$PWD}"
 jq -e . "$P" >/dev/null 2>&1 || { log "materialize: invalid json $P"; exit 1; }
 
+# Exit contract (#16 P0-h): review.sh advances the watermark ONLY on landed(0)/clean-noop(10). deferred(20) =
+# store busy after bounded retries; failed(30) = write reverted/quarantined. Both retry (harvest backstops).
+EX_LANDED=0; EX_NOOP=10; EX_DEFERRED=20; EX_FAILED=30
+pre_rev=""; wrote_slugs=()
+if [ "$LOOP_MODE" = active ]; then
+  # #23 lock-shrink: review no longer holds the store lock across its model run — materialize ALWAYS acquires its
+  # OWN lock (bounded wait; the reviewer already spent ~$0.43, so retry a few times before deferring) and re-ingests
+  # + re-validates immediately before writing, so a peer write during the review window only makes the proposal
+  # stale (dedup/validate here catches it). Give-up = DEFERRED → no watermark advance; harvest retries.
+  acquire_store_lock_wait "materialize-$(sanitize_sid "$session")" "${MATERIALIZE_LOCK_TRIES:-3}" "${MATERIALIZE_LOCK_SLEEP:-5}" \
+    || { log "materialize: store busy after retries ($session) — DEFERRED, no advance"; exit $EX_DEFERRED; }
+  trap 'release_store_lock' EXIT
+  ing="$(ingest_external)"; [ "$ing" = clean ] || log "materialize: entry ingress=$ing ($session)"   # re-ingest pre-existing dirt (incl. any peer write during the review window)
+  pre_rev="$(mem_git rev-parse HEAD 2>/dev/null)"   # explicit-path commit reference (replaces the pre-materialize snapshot)
+fi
+
 # Specific token shapes only — deliberately NO bare-hex rule (git SHAs are 40-hex).
 SECRET='sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]+|-----BEGIN [A-Z ]*PRIVATE KEY|[Bb]earer [A-Za-z0-9._-]{24,}|password[[:space:]]*[:=][[:space:]]*[^[:space:]]'
 kebab='^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
 yqs() { local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }   # YAML-safe quoted string
 
-acc_m=0; rej_m=0; snapped_pre=0; wrote_active=0
+acc_m=0; rej_m=0; wrote_active=0
 
 # ── memories (cap 3) ─────────────────────────────────────────────────────────
 mlen=$(jq '.memories|length' "$P" 2>/dev/null || echo 0)
@@ -39,8 +55,7 @@ for ((i=0; i<mlen && i<3; i++)); do
   [ -n "$how" ] && full="$full"$'\n'"**How to apply:** $how"
 
   if [ "$LOOP_MODE" = active ]; then
-    [ "$snapped_pre" = 0 ] && { mem_snapshot "pre-materialize-$session"; snapped_pre=1; }
-    dest="$MEMORY_DIR/$slug.md"; whyfile=""; wrote_active=1
+    dest="$MEMORY_DIR/$slug.md"; whyfile=""; wrote_active=1; wrote_slugs+=("$slug")
   else dest="$PENDING_MEM/$slug.md"; whyfile="$PENDING_MEM/$slug.WHY.md"; fi
   mkdir -p "$(dirname "$dest")"
   { printf -- '---\n'; printf 'name: %s\n' "$slug"; printf 'description: %s\n' "$(yqs "$desc")";
@@ -61,17 +76,26 @@ for ((i=0; i<mlen && i<3; i++)); do
     && log "  regret $slug (gardener pruned it earlier; reviewer re-captured)"
 done
 
+rc_out=$EX_NOOP   # default: ran fine, wrote nothing to the store (all dups/rejects, or pending mode) → advance
 if [ "$wrote_active" = 1 ]; then
   # Post-write integrity gate (2a): a deterministic append shouldn't corrupt the index, but assert it — on
-  # failure, do NOT commit; restore to pre-materialize and quarantine the proposal (doctor-visible tag).
+  # failure, do NOT commit; restore to pre_rev and quarantine the proposal (doctor-visible tag).
   if vreason="$(validate_store "$MEMORY_DIR")"; then
-    mem_snapshot "post-materialize-$session"
+    # EXPLICIT-path commit (P0-c, never add -A): exactly the written bodies + the two indexes. A peer BODY write
+    # between validate and commit can't ride in (not in the explicit set). DOCUMENTED residual (xhigh): a peer write
+    # to an INDEX file in that window rides inside the staged index — bounded to the 2 indexes, non-poison, nightly-reviewed.
+    cpaths=(MEMORY.md ARCHIVE.md); for s in "${wrote_slugs[@]}"; do cpaths+=("$s.md"); done
+    mem_git add -- "${cpaths[@]}" >/dev/null 2>&1
+    mem_git commit -qm "materialize-$session $(date '+%Y-%m-%dT%H:%M:%S')" >/dev/null 2>&1
     rebuild_mem_index "materialize $session"   # derived retriever index; stale index self-heals next write
+    rc_out=$EX_LANDED
   else
-    q="$PENDING_MEM/quarantine-$session-$(date +%s)"; mkdir -p "$PENDING_MEM"
+    mkdir -p "$QUARANTINE_DIR"; q="$QUARANTINE_DIR/materialize-$(sanitize_sid "$session")-$(date +%s)"
     cp "$P" "$q.json" 2>/dev/null; printf 'validate:%s\nsession:%s\n' "$vreason" "$session" > "$q.reason"
-    mem_restore_to "$(mem_git rev-parse HEAD 2>/dev/null)" "$(dirname "$LOG")/materialize-FAILED-$session.patch"
+    mem_restore_to "$pre_rev" "$q.patch"   # discard the bad write → HEAD stays at the (valid) pre-materialize rev
     log "materialize: quarantine $session (validate:$vreason) — write reverted, proposal saved to ${q#$HOME/}.json"
+    rc_out=$EX_FAILED
   fi
 fi
-log "materialize: $session done mem(+$acc_m/-$rej_m) mode=$LOOP_MODE"
+log "materialize: $session done mem(+$acc_m/-$rej_m) mode=$LOOP_MODE rc=$rc_out"
+exit $rc_out

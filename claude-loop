@@ -4,6 +4,8 @@
 #   ./claude-loop install [--link]    place machinery, merge hooks, create runtime dirs
 #                                       (default copies; --link symlinks for live dev)
 #   ./claude-loop update              git pull + re-apply (idempotent)
+#   ./claude-loop migrate             relocate a pre-#23 install (~/.claude/loop + ~/.claude/memory-global)
+#                                       to LOOP_HOME (~/.claude-loop); resumable, mv keeps git history
 #   ./claude-loop uninstall [--purge] remove machinery + hooks + schedule (keeps your data unless --purge)
 #   ./claude-loop status              show install state + loopctl doctor
 #
@@ -12,13 +14,34 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-LOOP="$CLAUDE_HOME/loop"
-SKILLS_DIR="$CLAUDE_HOME/skills"
+CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"   # ~/.claude surfaces: settings, skills-discovery, transcripts
+LOOP_HOME="${LOOP_HOME:-$HOME/.claude-loop}"        # #23: loop machinery + store + writable state — DISTINCT from ~/.claude (a protected path)
+LOOP="$LOOP_HOME"                                    # machinery root (was $CLAUDE_HOME/loop)
+SKILLS_DIR="$CLAUDE_HOME/skills"                     # skills DISCOVERY dir stays under ~/.claude (operator-gated install writes it)
 SETTINGS="$CLAUDE_HOME/settings.json"
 
 die(){ echo "error: $*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "missing required tool: $1"; }
+
+# #23/#9: skills are installed as COPIES under ~/.claude/skills (discovery dir). A plain `rm -rf; cp` on update
+# silently clobbers a hand-edited installed skill. Guard it: record the hash we installed; on the next update, if
+# the installed tree no longer matches that hash, the operator edited it → preserve the edit as .bak, then overwrite.
+# No baseline (first install after this ships) ⇒ overwrite + start tracking; we never GUESS an edit we can't prove.
+skill_hash(){ find "$1" -type f -not -path '*/.git/*' -exec shasum {} + 2>/dev/null | awk '{print $1}' | LC_ALL=C sort | shasum | awk '{print $1}'; }
+install_skill(){   # $1 = skill name
+  local s="$1" dst="$SKILLS_DIR/$1" man="$LOOP/state/skills-installed.sha" prior cur h
+  if [ -d "$dst" ]; then
+    prior="$(grep -E " $s\$" "$man" 2>/dev/null | awk '{print $1}' | head -1)"
+    cur="$(skill_hash "$dst")"
+    if [ -n "$prior" ] && [ "$prior" != "$cur" ]; then
+      rm -rf "$dst.bak"; cp -R "$dst" "$dst.bak"
+      echo "  ⚠ $s was locally modified since install — preserved as $dst.bak before overwriting"
+    fi
+  fi
+  rm -rf "$dst"; cp -R "$REPO/skills/$s" "$dst"
+  mkdir -p "$LOOP/state"; h="$(skill_hash "$dst")"
+  { grep -vE " $s\$" "$man" 2>/dev/null; echo "$h $s"; } > "$man.tmp" && mv "$man.tmp" "$man"
+}
 
 # Idempotently (re)point the loop hooks at $LOOP, preserving all other settings and foreign hooks.
 merge_hooks(){
@@ -60,6 +83,9 @@ merge_hooks(){
     # flip-day latency off the hot path. Phase 3 adds them (friction first, then seeking/hazard with the
     # per-turn cap) per the gates.tsv precondition block. PreCompact resets rows 1-2 inject-dedup after compaction.
     | put("PreCompact"; "on-precompact.sh")
+    # #23: native auto-memory MUST read the loop store — else the loop curates $LOOP/memory-global while Claude Code
+    # auto-loads a different dir. The loop owns this setting (relocation repoints it here, not in a separate step).
+    | .autoMemoryDirectory = ($base + "/memory-global")
   ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS" || die "settings.json hook-merge failed"
 }
 
@@ -75,26 +101,34 @@ unmerge_hooks(){
 }
 
 place(){   # $1 = copy|link
-  mkdir -p "$LOOP/state" "$LOOP/log" "$LOOP/proposals" "$LOOP/pending/skills" "$LOOP/pending/memories" "$LOOP/archive" "$SKILLS_DIR"
+  mkdir -p "$LOOP/state" "$LOOP/log" "$LOOP/proposals" "$LOOP/pending/skills" "$LOOP/pending/memories" "$LOOP/archive" "$LOOP/memory-global" "$SKILLS_DIR"
   if [ "$1" = link ]; then
-    for p in bin hooks prompts lib.sh config.sh gates.tsv tags.sh; do rm -rf "$LOOP/$p"; ln -s "$REPO/loop/$p" "$LOOP/$p"; done
+    # #23: machinery is now PURE symlinks in --link (the #16 skills-copy-as-guard-hack is gone with the guard). `policy`
+    # (permission-profile TEMPLATES) symlinks too; profiles are MATERIALIZED into $LOOP/state/profiles below.
+    for p in bin hooks prompts lib.sh config.sh gates.tsv tags.sh policy; do rm -rf "$LOOP/$p"; ln -s "$REPO/loop/$p" "$LOOP/$p"; done
     rm -rf "$LOOP/POLICY.md"; ln -s "$REPO/POLICY.md" "$LOOP/POLICY.md"   # judgment layer (repo root, not loop/) → runtime {{POLICY}}
-    for s in review-memories review-skills; do rm -rf "$SKILLS_DIR/$s"; ln -s "$REPO/skills/$s" "$SKILLS_DIR/$s"; done
+    # Installed skills stay COPIES under ~/.claude/skills — that's INSTALL semantics (discovery dir), not link; repo
+    # skill edits reappear on `claude-loop update`. (update applies codex's clobber fix: overwrite only if unchanged.)
+    for s in review-memories review-skills; do install_skill "$s"; done
   else
-    mkdir -p "$LOOP/bin" "$LOOP/hooks" "$LOOP/prompts"
+    mkdir -p "$LOOP/bin" "$LOOP/hooks" "$LOOP/prompts" "$LOOP/policy"
     cp -R "$REPO/loop/bin/." "$LOOP/bin/"
     cp -R "$REPO/loop/hooks/." "$LOOP/hooks/"
     cp -R "$REPO/loop/prompts/." "$LOOP/prompts/"
+    cp -R "$REPO/loop/policy/." "$LOOP/policy/"        # #23: permission-profile TEMPLATES (materialized below)
     cp "$REPO/loop/lib.sh" "$LOOP/lib.sh"
     cp "$REPO/loop/config.sh" "$LOOP/config.sh"       # defaults; your config.local.sh is never touched
     cp "$REPO/loop/tags.sh" "$LOOP/tags.sh"           # log-tag registry (lib.sh sources it at runtime)
     cp "$REPO/loop/gates.tsv" "$LOOP/gates.tsv"       # injection-engine config (gate-runner reads $LOOP/gates.tsv)
     cp "$REPO/POLICY.md" "$LOOP/POLICY.md"            # judgment layer (repo root, not loop/) → runtime {{POLICY}}
-    for s in review-memories review-skills; do rm -rf "$SKILLS_DIR/$s"; cp -R "$REPO/skills/$s" "$SKILLS_DIR/$s"; done
+    for s in review-memories review-skills; do install_skill "$s"; done
   fi
   chmod +x "$LOOP/bin/"* "$LOOP/hooks/"*.sh 2>/dev/null || true
+  # #23: materialize the machine-realpath per-worker permission profiles into $LOOP/state/profiles (workers spawn
+  # `claude -p --settings <materialized>`; a stale/missing profile is a doctor warning + a worker hard-fail).
+  ( . "$LOOP/lib.sh" 2>/dev/null && materialize_profiles ) || echo "  ⚠ profile materialization failed — run '$LOOP/bin/loopctl reprofile'"
   # build the initial derived index so a fresh install/update never scores an empty corpus before the first write
-  [ -d "$CLAUDE_HOME/memory-global" ] && /usr/bin/python3 "$LOOP/bin/build_index.py" "$CLAUDE_HOME/memory-global" "$LOOP/state/mem-index.json" >/dev/null 2>&1 || true
+  [ -d "$LOOP/memory-global" ] && /usr/bin/python3 "$LOOP/bin/build_index.py" "$LOOP/memory-global" "$LOOP/state/mem-index.json" >/dev/null 2>&1 || true
 }
 
 cmd="${1:-status}"; shift 2>/dev/null || true
@@ -102,7 +136,7 @@ case "$cmd" in
   install)
     mode=copy; [ "${1:-}" = "--link" ] && mode=link
     place "$mode"; merge_hooks
-    echo "✓ installed ($mode) into $CLAUDE_HOME"
+    echo "✓ installed ($mode): machinery+store at $LOOP_HOME · hooks/settings/skills under $CLAUDE_HOME"
     echo "next steps (nothing was enabled automatically):"
     echo "  $LOOP/bin/loopctl token             # optional — unattended-cron auth"
     echo "  $LOOP/bin/loopctl install-schedule  # daily harvest + gardener (launchd)"
@@ -113,9 +147,127 @@ case "$cmd" in
   update)
     need git
     ( cd "$REPO" && git pull --ff-only ) || die "git pull failed (commit/stash local changes first?)"
-    if [ -L "$LOOP/bin" ]; then merge_hooks; echo "✓ updated (linked — pulled latest; symlinks are already live)"
+    if [ -L "$LOOP/bin" ]; then for s in review-memories review-skills; do install_skill "$s"; done; merge_hooks; echo "✓ updated (linked — machinery live via symlinks; skills re-copied per #16)"
     else place copy; merge_hooks; echo "✓ updated (re-copied latest machinery)"; fi
     echo "  your config.local.sh, token, and data were left untouched."
+    ;;
+  migrate)
+    # #23: relocate a pre-relocation install (machinery + store under ~/.claude/loop + ~/.claude/memory-global)
+    # to LOOP_HOME (~/.claude-loop), out of the protected ~/.claude, so workers can drop bypassPermissions and
+    # write platform-scoped. RESUMABLE marker phases: a phase writes $LOOP/state/migrate.phase on success; a
+    # re-run skips completed phases and resumes at the first incomplete one (fix → re-run continues). mv (not cp)
+    # keeps git history + is atomic within $HOME (same filesystem: ~/.claude & ~/.claude-loop).
+    need git; need jq
+    OLD_LOOP="$CLAUDE_HOME/loop"; OLD_MEM="$CLAUDE_HOME/memory-global"
+    [ "$OLD_LOOP" = "$LOOP" ] && die "migrate: LOOP_HOME ($LOOP) equals the old path — nothing to relocate."
+    MARK="$LOOP/state/migrate.phase"; HADSCHED="$LOOP/state/migrate.had_schedule"
+    mkdir -p "$LOOP/state"
+    ph(){ [ -f "$MARK" ] && [ "$(cat "$MARK" 2>/dev/null || echo 0)" -ge "$1" ]; }   # phase $1 already done?
+    mark(){ echo "$1" > "$MARK"; }
+    # already migrated? (store at new home, old store gone, no in-flight marker) → report + doctor, no-op
+    if [ ! -e "$MARK" ] && [ ! -d "$OLD_MEM" ] && [ -e "$LOOP/memory-global/.git" ]; then
+      echo "already migrated — store at $LOOP/memory-global, no old store at $OLD_MEM."
+      [ -d "$OLD_LOOP" ] && echo "  (old dir $OLD_LOOP remains as a grace shim — \`rm -rf $OLD_LOOP\` once live sessions cycle)"
+      bash "$LOOP/bin/loopctl" doctor 2>/dev/null || true; exit 0
+    fi
+    # nothing to migrate (fresh machine, no old data)
+    if [ ! -e "$MARK" ] && [ ! -d "$OLD_LOOP" ] && [ ! -d "$OLD_MEM" ]; then
+      die "migrate: no old install at $OLD_LOOP or $OLD_MEM — use \`./claude-loop install\` for a fresh setup."
+    fi
+    echo "migrating loop → $LOOP  (resumable; re-run to continue after any fix)"
+
+    # ── Phase 1: refuse-if-enabled + unload OLD-path launchd FIRST ──────────────
+    if ! ph 1; then
+      if [ -f "$OLD_LOOP/config.local.sh" ] && ( . "$OLD_LOOP/config.local.sh" 2>/dev/null; [ "${LOOP_ENABLED:-0}" = 1 ] ); then
+        die "refuse: the loop is ENABLED — a worker could fire mid-migration. Disable first:  $OLD_LOOP/bin/loopctl disable"
+      fi
+      if [ "$CLAUDE_HOME" = "$HOME/.claude" ]; then
+        la="$HOME/Library/LaunchAgents"; found=0
+        for l in io.claudeloop.harvest io.claudeloop.garden io.claudeloop.mine-skills; do
+          [ -f "$la/$l.plist" ] || continue; found=1
+          launchctl unload "$la/$l.plist" 2>/dev/null; rm -f "$la/$l.plist" && echo "  ✓ unloaded old-path $l"
+        done
+        [ "$found" = 1 ] && : > "$HADSCHED"   # reinstall at the new home in phase 4 only if a schedule existed
+      else echo "  (non-default CLAUDE_CONFIG_DIR — no launchd to unload)"; fi
+      mark 1; echo "  ✓ phase 1: enabled-checked + old launchd unloaded"
+    fi
+
+    # ── Phase 2: fresh machinery install at LOOP_HOME ───────────────────────────
+    if ! ph 2; then place copy; mark 2; echo "  ✓ phase 2: machinery installed → $LOOP"; fi
+
+    # ── Phase 3: validate → MOVE store (history intact) + carry writable state/config/env ───
+    if ! ph 3; then
+      # Where is the store right now? OLD until moved; NEW on a resume that already moved it (crash between mv and mark).
+      if [ -d "$OLD_MEM" ] && [ -z "$(ls -A "$LOOP/memory-global" 2>/dev/null || true)" ]; then src="$OLD_MEM"; else src="$LOOP/memory-global"; fi
+      # HARD GATE (validate BEFORE move): keep the store canonical at its current location until proven good — a
+      # failure here leaves it exactly where it was, settings/native-auto-memory untouched. No degradation window.
+      if ! ( . "$LOOP/lib.sh" 2>/dev/null && validate_store "$src" >/dev/null 2>&1 ); then
+        echo "  ✗ store at $src FAILS validate_store — NOT moving/advancing (nothing repointed)."
+        echo "    Inspect/fix, then re-run migrate (resumes here):  ( cd $src && ../loop/bin/loopctl verify-store )"
+        exit 1
+      fi
+      if [ "$src" = "$OLD_MEM" ]; then
+        rm -rf "$LOOP/memory-global"                        # place() left an EMPTY one; replace with the validated store
+        mv "$OLD_MEM" "$LOOP/memory-global" || die "phase 3: mv $OLD_MEM → $LOOP/memory-global failed"
+        echo "  ✓ store validated + MOVED $OLD_MEM → $LOOP/memory-global (git history intact)"
+      else
+        echo "  · store already at $LOOP/memory-global (validated; skip move)"
+      fi
+      for d in state pending archive preserve proposals; do   # writable dirs WHOLESALE
+        [ -d "$OLD_LOOP/$d" ] && { mkdir -p "$LOOP/$d"; cp -R "$OLD_LOOP/$d/." "$LOOP/$d/" 2>/dev/null || true; }
+      done
+      for f in config.local.sh .env gates.local.tsv; do      # operator files EXPLICITLY (never carried silently elsewhere)
+        [ -f "$OLD_LOOP/$f" ] && [ ! -f "$LOOP/$f" ] && cp -p "$OLD_LOOP/$f" "$LOOP/$f" && echo "  ✓ carried $f"
+      done
+      mark 3; echo "  ✓ phase 3: store validated + moved; state/config.local/.env/preserve/pending/proposals carried"
+    fi
+
+    # ── Phase 4: repoint settings (hooks + autoMemoryDirectory) + reinstall launchd ─
+    if ! ph 4; then
+      merge_hooks   # hooks → $LOOP/hooks; autoMemoryDirectory → $LOOP/memory-global (one jq, same home)
+      if [ -f "$HADSCHED" ] && [ "$CLAUDE_HOME" = "$HOME/.claude" ] && [ -e "$LOOP/bin/loopctl" ]; then
+        bash "$LOOP/bin/loopctl" install-schedule >/dev/null 2>&1 \
+          && echo "  ✓ launchd reinstalled at new paths" \
+          || echo "  ⚠ launchd reinstall reported an issue — run: $LOOP/bin/loopctl install-schedule"
+      fi
+      mark 4; echo "  ✓ phase 4: settings hooks + autoMemoryDirectory → $LOOP; launchd repointed"
+    fi
+
+    # ── Phase 5: refresh peer share-memory pointers (AGENTS.md → new store path) ─
+    if ! ph 5; then
+      ( . "$LOOP/lib.sh" 2>/dev/null; [ -n "${SHARE_MEMORY_HOMES:-}" ] && bash "$LOOP/bin/loopctl" share-memory ) 2>/dev/null || true
+      mark 5; echo "  ✓ phase 5: peer share-memory pointers refreshed (if SHARE_MEMORY_HOMES set)"
+    fi
+
+    # ── Phase 6: rebuild mem-index at the new home ──────────────────────────────
+    if ! ph 6; then
+      /usr/bin/python3 "$LOOP/bin/build_index.py" "$LOOP/memory-global" "$LOOP/state/mem-index.json" >/dev/null 2>&1 || true
+      mark 6; echo "  ✓ phase 6: mem-index rebuilt at new home"
+    fi
+
+    # ── Phase 7: exec-only compat shim at OLD path (grace period for live sessions) ─
+    if ! ph 7; then
+      if [ "$OLD_LOOP" != "$LOOP" ] && [ -d "$OLD_LOOP" ]; then
+        mkdir -p "$OLD_LOOP/hooks" "$OLD_LOOP/bin"
+        # EXEC-ONLY: the shim never sources the (stale) old config/lib — it re-execs the new entry, which sources
+        # the new machinery. A live session that cached the old hook path is redirected to the relocated store.
+        for h in "$LOOP/hooks/"*.sh; do [ -e "$h" ] || continue; n="$(basename "$h")"
+          printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$LOOP/hooks/$n" > "$OLD_LOOP/hooks/$n"; chmod +x "$OLD_LOOP/hooks/$n"; done
+        for b in "$LOOP/bin/"*; do [ -e "$b" ] || continue; n="$(basename "$b")"
+          printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$LOOP/bin/$n" > "$OLD_LOOP/bin/$n"; chmod +x "$OLD_LOOP/bin/$n"; done
+        echo "  ✓ exec-only shim at $OLD_LOOP (redirects live sessions' old hook paths → new machinery)"
+      fi
+      mark 7; echo "  ✓ phase 7: compat shim in place"
+    fi
+
+    # ── Phase 8: final doctor ───────────────────────────────────────────────────
+    echo "  → phase 8: doctor"
+    bash "$LOOP/bin/loopctl" doctor || true
+    rm -f "$MARK" "$HADSCHED"
+    echo "✓ migration complete."
+    echo "  store MOVED (not copied) to $LOOP/memory-global · native auto-memory + hooks repointed."
+    echo "  old dir $OLD_LOOP now execs into $LOOP (grace shim). After live sessions cycle:  rm -rf $OLD_LOOP"
+    echo "  re-enable when ready:  $LOOP/bin/loopctl enable"
     ;;
   uninstall)
     purge=0; [ "${1:-}" = "--purge" ] && purge=1
@@ -123,18 +275,18 @@ case "$cmd" in
     # launchd lives in ~/Library/LaunchAgents (NOT isolated by CLAUDE_CONFIG_DIR) — only touch it for a real default install
     if [ "$CLAUDE_HOME" = "$HOME/.claude" ] && [ -e "$LOOP/bin/loopctl" ]; then bash "$LOOP/bin/loopctl" uninstall-schedule 2>/dev/null
     else echo "  (skipped launchd cleanup — non-default CLAUDE_CONFIG_DIR; remove ~/Library/LaunchAgents/io.claudeloop.* manually if you set up a schedule)"; fi
-    for p in bin hooks prompts lib.sh config.sh gates.tsv tags.sh POLICY.md; do rm -rf "$LOOP/$p"; done
+    for p in bin hooks prompts lib.sh config.sh gates.tsv tags.sh policy POLICY.md; do rm -rf "$LOOP/$p"; done
     for s in review-memories review-skills; do rm -rf "$SKILLS_DIR/$s"; done
     if [ "$purge" = 1 ]; then rm -rf "$LOOP"; echo "✓ uninstalled + PURGED ($LOOP removed)"
     else echo "✓ uninstalled machinery + hooks + schedule. Kept your data in $LOOP/ (state, log, proposals, pending, archive, .env, config.local.sh)."; fi
-    echo "  Your memories in $CLAUDE_HOME/memory-global are untouched."
+    echo "  Your memories in $LOOP_HOME/memory-global are untouched."
     ;;
   status)
     echo "repo:    $REPO"
-    echo "target:  $CLAUDE_HOME"
+    echo "loop home: $LOOP_HOME   ·   claude surfaces: $CLAUDE_HOME"
     if [ -L "$LOOP/bin" ]; then echo "install: linked (dev)"; elif [ -d "$LOOP/bin" ]; then echo "install: copied"; else echo "install: not installed"; fi
     [ -d "$REPO/.git" ] && echo "version: $(cd "$REPO" && git rev-parse --short HEAD 2>/dev/null) ($(cd "$REPO" && git rev-list --count HEAD 2>/dev/null) commits)"
     [ -e "$LOOP/bin/loopctl" ] && { echo "---"; bash "$LOOP/bin/loopctl" doctor 2>/dev/null; }
     ;;
-  *) echo "usage: ./claude-loop {install [--link] | update | uninstall [--purge] | status}"; exit 1;;
+  *) echo "usage: ./claude-loop {install [--link] | update | migrate | uninstall [--purge] | status}"; exit 1;;
 esac

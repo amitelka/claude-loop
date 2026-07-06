@@ -6,14 +6,18 @@ A **self-improving memory + skills loop for Claude Code**, native to the harness
 
 ```sh
 git clone <this-repo> ~/git/claude-loop && cd ~/git/claude-loop
-./claude-loop install                 # copy machinery, merge hooks, create runtime dirs
-~/.claude/loop/bin/loopctl token            # optional: token for unattended cron
-~/.claude/loop/bin/loopctl install-schedule # daily harvest + gardener (launchd, catches up after sleep)
-~/.claude/loop/bin/loopctl enable           # start the per-session reviewer (stays dry-run)
-~/.claude/loop/bin/loopctl mode active      # when you trust it: memories auto-write
+./claude-loop install                          # machinery + store at ~/.claude-loop; hooks/settings under ~/.claude
+~/.claude-loop/bin/loopctl token            # optional: token for unattended cron
+~/.claude-loop/bin/loopctl install-schedule # daily harvest + gardener (launchd, catches up after sleep)
+~/.claude-loop/bin/loopctl enable           # start the per-session reviewer (stays dry-run)
+~/.claude-loop/bin/loopctl mode active      # when you trust it: memories auto-write
 ```
 
-Nothing is enabled silently. `./claude-loop install --link` symlinks the machinery instead of copying (edits in this repo go live — best for development).
+The loop's machinery and memory store live at **`LOOP_HOME` (`~/.claude-loop`)**, deliberately *outside* the
+protected `~/.claude` — that's what lets each worker run least-privilege (platform-enforced write scope) instead
+of `bypassPermissions`. `~/.claude` keeps only the hooks, `settings.json`, and skills-discovery dir.
+
+Nothing is enabled silently. `./claude-loop install --link` symlinks the machinery instead of copying (edits in this repo go live — best for development). **Upgrading a pre-relocation install** (machinery under `~/.claude/loop`)? Run `./claude-loop migrate` — it relocates machinery + store to `~/.claude-loop` resumably, keeps git history, and repoints settings.
 
 ## How it works
 
@@ -28,7 +32,7 @@ Memory lives in **two tiers**: a small **hot** index (`MEMORY.md`, auto-loaded e
 - **Triggers** — review at **session close** (`SessionEnd`), a daily **harvest** backstop, and a mid-session top-up every ~30 tool-calls (`REVIEW_EVERY_TOOLCALLS`, default `30`; opt out with `0`). Nothing fires until the loop is enabled — install never spends, and `loopctl enable` echoes the cadence — and rung-2 triage will make each top-up near-free. Watermarks advance only on a *successful* review, so a failed/API-errored run retries.
 - **Reviewer** (Sonnet, read-only-ish): renders the **active branch only** of the transcript (drops Esc-Esc rewind forks, `isMeta` noise, harness wrappers; keeps subagent `Task` returns), judges **that slice alone** against the POLICY capture bar (it does not browse the store — dedup is the gatekeeper's job), and **writes a JSON proposal file** — it never writes real state.
 - **Gatekeeper** (`materialize.sh`, bash+jq): validates slug/type/fields, scans for secrets, dedups, caps counts, **code-generates frontmatter**, and **routes each memory to a tier by type** (feedback/user → hot, reference/project → cold) in `memory-global` (optional `repo:` tag for later filtering — one store, no per-repo dirs). A guard aborts if the reviewer touched anything but its proposal.
-- **Store** — `~/.claude/memory-global/` is a git repo; active-mode writes are snapshot-bracketed and `loopctl rollback`-able.
+- **Store** — `~/.claude-loop/memory-global/` is a git repo (native auto-memory reads it via `settings.autoMemoryDirectory`, which the loop repoints); active-mode writes are snapshot-bracketed and `loopctl rollback`-able.
 - **Retriever** — ships **disabled** behind **two independent switches, both required to inject**: (1) the loop enabled (`loopctl enable` → `LOOP_ENABLED=1`, plus `MEASUREMENT_ENABLED=1`; both default `0`), and (2) the prompt-submit / subagent-spawn gate rows flipped `shadow`→`live` (default `shadow`). `loopctl enable` sets only the first — so it alone does **not** inject. With both set, on prompt-submit and subagent-spawn a deterministic **BM25F** scorer ranks the whole store and injects the top **pointers, not bodies** — Claude Reads the file only if it's relevant. Why pointers, and how the scorer was chosen: [docs/decisions/](docs/decisions/).
 - **Gardener** (Opus, daily): dedups, prunes, and re-verifies against live code; keeps the **hot** index within its budget by demoting reference-class entries to **cold** (rules are never demoted — they graduate upward), and curates cold. Never auto-edits skills. A run counts as done only if it wrote a fresh digest with no API error.
 - **Self-heal** (gardener + skill-miner): a **missed** run (Mac asleep past its slot) or a **failed** one is re-run by a catch-up — fired from the nightly harvest *and*, the moment you're next active, from the `Stop` hook (sessions often stay open for days, so `SessionStart` alone would rarely fire; the catch-up rides every turn instead). The presence path (the `Stop` worker) is gated by an **atomic single-worker lock**, so at most one *detached* worker runs no matter how many turns fire it. The nightly harvest is a **separate entry** running the same due-checks — not behind that gate; instead the **store lock** serializes everything that mutates the store: in the catch-up **worker** garden runs **then** miner in sequence; the independently scheduled agents (gardener 03:00, miner 04:00) aren't coupled by an ordering lock — the **store lock** serializes any overlap (busy → **skip, not queue**) and the catch-up paths supply the retry, so no two paths overlap or starve each other. Each catch-up is independently gated to **≤ once / 2h**. `loopctl doctor` flags a stale/failed garden or a pending miner failure.
@@ -53,6 +57,7 @@ Evidence rule for `docs/decisions/`: every claim cites its receipt (measurement,
 ```
 ./claude-loop install [--link]    place machinery, merge hooks, create dirs
 ./claude-loop update              git pull + re-apply (idempotent)
+./claude-loop migrate             relocate a pre-relocation install (~/.claude/loop) → ~/.claude-loop (resumable)
 ./claude-loop uninstall [--purge] remove machinery + hooks + schedule (keeps your data unless --purge)
 ./claude-loop status              install state + health check
 
@@ -69,12 +74,12 @@ loopctl install-schedule | token      unattended daily runs
 
 ## Data & privacy
 
-The repo contains **machinery only**. These are never committed (enforced by `.gitignore`) and stay on your machine:
+The repo contains **machinery only**. Your runtime data + memories live under `LOOP_HOME` (`~/.claude-loop`), never in the repo, never committed:
 
-- `loop/.env` — your subscription token
-- `loop/config.local.sh` — your overrides
-- `loop/{state,log,proposals,pending,archive}/` — runtime data
-- `~/.claude/memory-global/` — your actual memories (a separate local git repo)
+- `~/.claude-loop/.env` — your subscription token
+- `~/.claude-loop/config.local.sh` — your overrides
+- `~/.claude-loop/{state,log,proposals,pending,archive}/` — runtime data (incl. `state/profiles/` — materialized per-worker permission profiles)
+- `~/.claude-loop/memory-global/` — your actual memories (a separate local git repo; native auto-memory reads it via `settings.autoMemoryDirectory`)
 
 Sharing this repo shares the system, not your memories or secrets.
 
