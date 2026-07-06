@@ -12,7 +12,8 @@ P=0; F=0; ok(){ P=$((P+1)); }; no(){ F=$((F+1)); echo "  FAIL: $1"; }
 
 build_old() {   # $1 = fixture root ; a pre-#23 install (old machinery stub + a VALID git store)
   local R="$1" CH="$1/.claude" OL="$1/.claude/loop" OM="$1/.claude/memory-global"
-  rm -rf "$R"; mkdir -p "$OL/bin" "$OL/hooks" "$OL/state" "$OL/pending/memories" "$OL/archive" "$CH/skills"
+  rm -rf "$R"; mkdir -p "$OL/bin" "$OL/hooks" "$OL/state" "$OL/pending/memories" "$OL/archive" "$OL/log" "$CH/skills"
+  printf 'logline-A\nlogline-B\n' > "$OL/log/loop.log"   # old run history → migrate must carry it ONCE (no double)
   printf 'LOOP_ENABLED=0\nLOOP_MODE=dry-run\n' > "$OL/config.local.sh"
   printf 'CLAUDE_CODE_OAUTH_TOKEN=sk-test\n' > "$OL/.env"
   echo 'watermark-state' > "$OL/state/somesession.line"
@@ -46,6 +47,10 @@ out="$(mig "$R")"; rc=$?
 [ -f "$NL/.env" ] && ok || no ".env not carried"
 [ -f "$NL/state/somesession.line" ] && ok || no "state/ not carried"
 [ -f "$NL/pending/memories/p1.md" ] && ok || no "pending/ not carried"
+# old log history carried EXACTLY ONCE (in loop.log, or loop.log.pre-migrate if migrate already wrote the active log), never doubled
+seen=$(grep -rh 'logline-A' "$NL/log" 2>/dev/null | wc -l | tr -d ' ')
+[ "${seen:-0}" -ge 1 ] && ok || no "old log/ history not carried"
+[ "${seen:-0}" = 1 ] && ok || no "old log content DOUBLED (logline-A seen ${seen}× in new log/)"
 [ "$(jq -r '.autoMemoryDirectory' "$R/.claude/settings.json" 2>/dev/null)" = "$NL/memory-global" ] && ok || no "autoMemoryDirectory not repointed"
 jq -e '.hooks.Stop[0].hooks[0].command | contains("'"$NL"'/hooks")' "$R/.claude/settings.json" >/dev/null 2>&1 && ok || no "Stop hook not repointed"
 [ -f "$NL/state/mem-index.json" ] && ok || no "mem-index not rebuilt"

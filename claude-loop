@@ -57,15 +57,20 @@ merge_hooks(){
       .hooks[$ev] = (((.hooks[$ev] // [])
         | map(select(((.hooks // []) | map(.command) | join(" ")) | contains($f) | not)))
         + [{"matcher":$m, "hooks":[{"type":"command","command":("bash " + $base + "/hooks/" + $f)}]}]);
-    def putg($ev; $gate):     # gate-runner (bin/, takes a gate-name arg); dedup on the full "…gate-runner.sh <gate>" cmd
-      (($base + "/bin/gate-runner.sh " + $gate)) as $cmd
+    def putg($ev; $gate):     # gate-runner (bin/, takes a gate-name arg)
+      # dedup on the PATH-INDEPENDENT tail "gate-runner.sh <gate>" (not the full <base>/bin/... cmd): after a
+      # LOOP_HOME relocation <base> changes, so a full-path key would leave the OLD-path row unmatched and duplicated
+      # (the filename-keyed put/putm dedup never had this bug). Same path-independent style as unmerge_hooks.
+      ("gate-runner.sh " + $gate) as $tail
+      | ($base + "/bin/gate-runner.sh " + $gate) as $cmd
       | .hooks[$ev] = (((.hooks[$ev] // [])
-        | map(select(((.hooks // []) | map(.command) | join(" ")) | contains($cmd) | not)))
+        | map(select(((.hooks // []) | map(.command) | join(" ")) | contains($tail) | not)))
         + [{"hooks":[{"type":"command","command":("bash " + $cmd)}]}]);
     def putgm($ev; $gate; $m): # matcher-aware gate-runner variant (one PreToolUse row per matcher → its own gate)
-      (($base + "/bin/gate-runner.sh " + $gate)) as $cmd
+      ("gate-runner.sh " + $gate) as $tail
+      | ($base + "/bin/gate-runner.sh " + $gate) as $cmd
       | .hooks[$ev] = (((.hooks[$ev] // [])
-        | map(select(((.hooks // []) | map(.command) | join(" ")) | contains($cmd) | not)))
+        | map(select(((.hooks // []) | map(.command) | join(" ")) | contains($tail) | not)))
         + [{"matcher":$m, "hooks":[{"type":"command","command":("bash " + $cmd)}]}]);
     .hooks = (.hooks // {})
     | put("Stop"; "on-stop.sh")
@@ -105,7 +110,7 @@ place(){   # $1 = copy|link
   if [ "$1" = link ]; then
     # #23: machinery is now PURE symlinks in --link (the #16 skills-copy-as-guard-hack is gone with the guard). `policy`
     # (permission-profile TEMPLATES) symlinks too; profiles are MATERIALIZED into $LOOP/state/profiles below.
-    for p in bin hooks prompts lib.sh config.sh gates.tsv tags.sh policy; do rm -rf "$LOOP/$p"; ln -s "$REPO/loop/$p" "$LOOP/$p"; done
+    for p in bin hooks prompts lib.sh config.sh gates.tsv probes.tsv tags.sh policy; do rm -rf "$LOOP/$p"; ln -s "$REPO/loop/$p" "$LOOP/$p"; done
     rm -rf "$LOOP/POLICY.md"; ln -s "$REPO/POLICY.md" "$LOOP/POLICY.md"   # judgment layer (repo root, not loop/) → runtime {{POLICY}}
     # Installed skills stay COPIES under ~/.claude/skills — that's INSTALL semantics (discovery dir), not link; repo
     # skill edits reappear on `claude-loop update`. (update applies codex's clobber fix: overwrite only if unchanged.)
@@ -120,10 +125,14 @@ place(){   # $1 = copy|link
     cp "$REPO/loop/config.sh" "$LOOP/config.sh"       # defaults; your config.local.sh is never touched
     cp "$REPO/loop/tags.sh" "$LOOP/tags.sh"           # log-tag registry (lib.sh sources it at runtime)
     cp "$REPO/loop/gates.tsv" "$LOOP/gates.tsv"       # injection-engine config (gate-runner reads $LOOP/gates.tsv)
+    cp "$REPO/loop/probes.tsv" "$LOOP/probes.tsv"     # repo-owned probe set (recall-probe.sh default $LOOP_DIR/probes.tsv) — like gates.tsv, was previously hand-placed
     cp "$REPO/POLICY.md" "$LOOP/POLICY.md"            # judgment layer (repo root, not loop/) → runtime {{POLICY}}
     for s in review-memories review-skills; do install_skill "$s"; done
   fi
-  chmod +x "$LOOP/bin/"* "$LOOP/hooks/"*.sh 2>/dev/null || true
+  # chmod ONLY in copy mode: in --link, $LOOP/bin etc. are symlinks INTO the repo, so a chmod here would write
+  # through them and mutate the repo working tree (spurious 644→755 diffs). Linked machinery inherits the repo's
+  # committed mode; the repo scripts are (and must stay) committed executable.
+  [ "$1" = copy ] && { chmod +x "$LOOP/bin/"* "$LOOP/hooks/"*.sh 2>/dev/null || true; }
   # #23: materialize the machine-realpath per-worker permission profiles into $LOOP/state/profiles (workers spawn
   # `claude -p --settings <materialized>`; a stale/missing profile is a doctor warning + a worker hard-fail).
   ( . "$LOOP/lib.sh" 2>/dev/null && materialize_profiles ) || echo "  ⚠ profile materialization failed — run '$LOOP/bin/loopctl reprofile'"
@@ -216,6 +225,17 @@ case "$cmd" in
       for d in state pending archive preserve proposals; do   # writable dirs WHOLESALE
         [ -d "$OLD_LOOP/$d" ] && { mkdir -p "$LOOP/$d"; cp -R "$OLD_LOOP/$d/." "$LOOP/$d/" 2>/dev/null || true; }
       done
+      # log/ carried per-file. A name that already exists at the new home (loop.log — migrate's OWN log() writes it
+      # during these phases) is preserved as <name>.pre-migrate rather than clobbered OR appended: old run history is
+      # kept AND the active log never doubles. (Omitting log/ here previously forced a hand-carry that doubled loop.log.)
+      if [ -d "$OLD_LOOP/log" ]; then
+        mkdir -p "$LOOP/log"
+        for lf in "$OLD_LOOP/log/"*; do
+          [ -f "$lf" ] || continue; ln="$(basename "$lf")"
+          if [ -e "$LOOP/log/$ln" ]; then cp -p "$lf" "$LOOP/log/$ln.pre-migrate" 2>/dev/null || true
+          else cp -p "$lf" "$LOOP/log/$ln" 2>/dev/null || true; fi
+        done
+      fi
       for f in config.local.sh .env gates.local.tsv; do      # operator files EXPLICITLY (never carried silently elsewhere)
         [ -f "$OLD_LOOP/$f" ] && [ ! -f "$LOOP/$f" ] && cp -p "$OLD_LOOP/$f" "$LOOP/$f" && echo "  ✓ carried $f"
       done
@@ -275,7 +295,7 @@ case "$cmd" in
     # launchd lives in ~/Library/LaunchAgents (NOT isolated by CLAUDE_CONFIG_DIR) — only touch it for a real default install
     if [ "$CLAUDE_HOME" = "$HOME/.claude" ] && [ -e "$LOOP/bin/loopctl" ]; then bash "$LOOP/bin/loopctl" uninstall-schedule 2>/dev/null
     else echo "  (skipped launchd cleanup — non-default CLAUDE_CONFIG_DIR; remove ~/Library/LaunchAgents/io.claudeloop.* manually if you set up a schedule)"; fi
-    for p in bin hooks prompts lib.sh config.sh gates.tsv tags.sh policy POLICY.md; do rm -rf "$LOOP/$p"; done
+    for p in bin hooks prompts lib.sh config.sh gates.tsv probes.tsv tags.sh policy POLICY.md; do rm -rf "$LOOP/$p"; done
     for s in review-memories review-skills; do rm -rf "$SKILLS_DIR/$s"; done
     if [ "$purge" = 1 ]; then rm -rf "$LOOP"; echo "✓ uninstalled + PURGED ($LOOP removed)"
     else echo "✓ uninstalled machinery + hooks + schedule. Kept your data in $LOOP/ (state, log, proposals, pending, archive, .env, config.local.sh)."; fi

@@ -48,5 +48,28 @@ ln -s "$real_target/SKILL.md" "$tmp/skills/review-skills/sneaky-link.md"
 dout="$(CLAUDE_CONFIG_DIR="$tmp" bash "$NL/bin/loopctl" doctor 2>/dev/null)"
 case "$dout" in *"symlink(s) under installed skills"*) ok yes yes;; *) ok no yes "doctor: NESTED symlink under a skill FLAGGED (recursive)";; esac
 
+echo "── #4: place() installs repo-owned probes.tsv (copy real file / link symlink) ──"
+ok "$([ -f "$NL/probes.tsv" ] && [ ! -L "$NL/probes.tsv" ] && echo realfile || echo no)" realfile "copy install: probes.tsv present as a real copy (like gates.tsv)"
+t2="$(cd "$(mktemp -d)" && pwd -P)"
+CLAUDE_CONFIG_DIR="$t2" LOOP_HOME="$t2/.claude-loop" bash "$repo/claude-loop" install --link >/dev/null 2>&1
+ok "$([ -L "$t2/.claude-loop/probes.tsv" ] && echo symlink || echo no)" symlink "link install: probes.tsv symlinked to the repo"
+rm -rf "$t2"
+
+echo "── #1: merge_hooks dedups gate-runner across a LOOP_HOME relocation ──"
+t3="$(cd "$(mktemp -d)" && pwd -P)"
+CLAUDE_CONFIG_DIR="$t3" LOOP_HOME="$t3/oldloop" bash "$repo/claude-loop" install >/dev/null 2>&1
+CLAUDE_CONFIG_DIR="$t3" LOOP_HOME="$t3/newloop" bash "$repo/claude-loop" install >/dev/null 2>&1   # 2nd base = relocation-like
+ok "$(jq -r '[.hooks[][]?.hooks[]?.command]|map(select(test("gate-runner")))|length' "$t3/settings.json" 2>/dev/null)" 2 "two different-base installs → exactly 2 gate-runner rows"
+ok "$(grep -q "$t3/oldloop/bin/gate-runner" "$t3/settings.json" && echo stale || echo clean)" clean "old-base gate-runner row stripped on relocation (path-independent dedup)"
+rm -rf "$t3"
+
+echo "── #D: install --link does NOT mutate repo working-tree modes (chmod copy-only) ──"
+rd="$(cd "$(mktemp -d)" && pwd -P)"; rr="$rd/repo"; cp -R "$repo" "$rr"
+chmod 644 "$rr/loop/bin/gate-runner.sh"   # a known NON-exec mode in the throwaway repo copy
+t4="$(cd "$(mktemp -d)" && pwd -P)"
+CLAUDE_CONFIG_DIR="$t4" LOOP_HOME="$t4/.claude-loop" bash "$rr/claude-loop" install --link >/dev/null 2>&1
+ok "$([ -x "$rr/loop/bin/gate-runner.sh" ] && echo flipped-to-exec || echo untouched)" untouched "link install left the throwaway repo bin/ mode untouched (no chmod-through-symlink)"
+rm -rf "$rd" "$t4"
+
 echo "  (relocation: $( [ "$rc" = 0 ] && echo ALL GREEN || echo has failures ))"
 exit "$rc"
